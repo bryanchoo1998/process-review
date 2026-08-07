@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Review</title>
+<style>
+
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg:#EDF1F2; --card:#FFFFFF;
+    --ink:#0F2331; --ink-soft:#5A7183; --ink-faint:#8CA0AE;
+    --navy:#0B2545; --teal:#1F7A6C; --teal-bg:#E4F1EE;
+    --amber:#C77B18; --amber-bg:#FBF0DE;
+    --red:#A93B2E; --red-bg:#F8E4E1;
+    --violet:#5B4A8A; --violet-bg:#ECE8F5;
+    --line:#D3DDE1; --line-soft:#E5EBEE;
+    --mono:'IBM Plex Mono', monospace; --sans:'IBM Plex Sans', sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{ background:var(--bg); color:var(--ink); font-family:var(--sans);
+        display:flex; flex-direction:column; min-height:100vh; }
+  button{font-family:inherit;}
+  input,textarea,select{font-family:inherit;}
+
+  /* ---------- CHROME ---------- */
+  .topbar{ background:var(--navy); color:#EAF1F4; padding:12px 24px;
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .topbar .brand{ font-family:var(--mono); font-weight:600; font-size:14px; cursor:pointer; }
+  .topbar .crumb{ font-size:12px; color:#8FB0C4; }
+  .topbar .crumb b{ color:#EAF1F4; font-weight:500; }
+  .topbar .spacer{flex:1;}
+  .ghost-btn{ background:transparent; border:1px solid #35597A; color:#B7CCD8;
+    font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.6px;
+    padding:6px 12px; border-radius:4px; cursor:pointer; }
+  .ghost-btn:hover{ background:#173654; color:#fff; }
+  .ghost-btn.warn:hover{ background:#5A2019; border-color:#8A3428; color:#fff; }
+
+  .progress-strip{ display:flex; gap:3px; padding:10px 24px; background:#0E2C51; }
+  .pip{ flex:1; height:5px; border-radius:3px; background:#20456B; cursor:pointer; }
+  .pip:hover{ background:#2E5C88; }
+  .pip.answered{ background:#4E92B8; }
+  .pip.skipped{ background:#C77B18; }
+  .pip.untouched{ background:#20456B; }
+  .pip.current{ background:#EAF1F4; }
+
+  .stage{ flex:1; display:flex; justify-content:center; padding:34px 24px 70px; }
+  .sheet{ width:100%; max-width:880px; }
+  .sheet.wide{ max-width:1040px; }
+
+  /* ---------- SHARED ---------- */
+  h2.page{ font-family:var(--mono); font-weight:700; font-size:24px; letter-spacing:-0.4px; margin-bottom:7px; }
+  p.lede{ font-size:14px; color:var(--ink-soft); line-height:1.55; max-width:620px; margin-bottom:24px; }
+  .label{ font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.8px;
+          color:var(--ink-soft); margin-bottom:9px; }
+  .label .hint{ display:block; font-family:var(--sans); text-transform:none; letter-spacing:0;
+                font-size:12.5px; color:var(--ink-faint); margin-top:4px; font-weight:400; }
+  .btn{ font-family:var(--mono); font-size:12px; letter-spacing:0.4px; padding:10px 18px;
+        border-radius:6px; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+  .btn:hover{ border-color:var(--ink-faint); }
+  .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+  .btn.primary:hover{ background:#153A63; }
+  .btn.danger{ color:var(--red); border-color:#E4C4BF; }
+  .btn.danger:hover{ background:var(--red-bg); }
+  .btn.sm{ padding:7px 12px; font-size:11px; }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .row{ display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+  .spacer{flex:1;}
+  .save-hint{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+
+  input[type=text].fld, textarea.fld, select.fld{
+    width:100%; border:1.5px solid var(--line); border-radius:6px; padding:10px 12px;
+    font-size:14px; color:var(--ink); background:#fff; }
+  textarea.fld{ min-height:64px; resize:vertical; line-height:1.5; }
+  input.fld:focus, textarea.fld:focus, select.fld:focus{
+    outline:2px solid var(--navy); outline-offset:1px; border-color:var(--navy); }
+  .field{ margin-bottom:16px; }
+  .field > label{ display:block; font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+                  letter-spacing:0.7px; color:var(--ink-soft); margin-bottom:6px; }
+
+  .empty-state{ background:var(--card); border:1.5px dashed var(--line); border-radius:10px;
+    padding:44px 28px; text-align:center; }
+  .empty-state h3{ font-family:var(--mono); font-size:16px; margin-bottom:8px; }
+  .empty-state p{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; max-width:400px;
+    margin:0 auto 18px; }
+
+  /* ---------- PROCESS LIBRARY ---------- */
+  .plist{ display:grid; gap:11px; }
+  .pcard{ background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:17px 19px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .pcard .pinfo{ flex:1; min-width:220px; }
+  .pcard .pname{ font-weight:600; font-size:16px; margin-bottom:4px; }
+  .pcard .pmeta{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+  .pcard .pmeta .sep{ margin:0 7px; opacity:0.5; }
+  .statuschip{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.5px; padding:4px 8px; border-radius:4px; }
+  .statuschip.draft{ background:#EEF1F2; color:var(--ink-faint); }
+  .statuschip.ready{ background:var(--teal-bg); color:var(--teal); }
+  .statuschip.inprog{ background:var(--amber-bg); color:var(--amber); }
+  .statuschip.done{ background:#E6ECF2; color:var(--navy); }
+
+  /* ---------- ADMIN: STEP EDITOR ---------- */
+  .steplist{ display:grid; gap:9px; margin-bottom:18px; }
+  .sedit{ background:var(--card); border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .sedit.open{ border-color:var(--navy); }
+  .sedit-head{ display:flex; gap:12px; align-items:center; padding:13px 16px; cursor:pointer; }
+  .sedit-head .sid{ font-family:var(--mono); font-weight:700; font-size:12px; color:var(--navy);
+    background:var(--bg); border:1px solid var(--line); padding:3px 8px; border-radius:4px; white-space:nowrap; }
+  .sedit-head .sname{ flex:1; font-weight:600; font-size:14.5px; min-width:120px; }
+  .sedit-head .sname.untitled{ color:var(--ink-faint); font-weight:400; font-style:italic; }
+  .sedit-head .scount{ font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); }
+  .sedit-head .chev{ font-family:var(--mono); color:var(--ink-faint); transition:transform .2s; }
+  .sedit.open .chev{ transform:rotate(90deg); }
+  .sedit-body{ display:none; border-top:1px solid var(--line); padding:18px 16px; background:#FAFCFC; }
+  .sedit.open .sedit-body{ display:block; }
+
+  .officepick{ display:flex; gap:7px; }
+  .officepick button{ flex:1; border:1.5px solid var(--line); background:#fff; border-radius:6px;
+    padding:9px; cursor:pointer; font-size:13px; color:var(--ink-soft); }
+  .officepick button.on{ border-color:var(--navy); background:#E6ECF2; color:var(--navy); font-weight:600; }
+
+  .agreetoggle{ display:flex; gap:10px; align-items:flex-start; background:#fff;
+    border:1.5px solid var(--line); border-radius:7px; padding:12px 14px; margin-bottom:18px; cursor:pointer; }
+  .agreetoggle input{ margin-top:2px; accent-color:var(--navy); cursor:pointer; }
+  .agreetoggle .t{ font-size:13.5px; font-weight:600; }
+  .agreetoggle .d{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; margin-top:2px; }
+
+  .vergrid{ display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+  .vergrid.single{ grid-template-columns:1fr; }
+  .verbox{ background:#fff; border:1.5px solid var(--line); border-radius:8px; padding:14px 15px; }
+  .verbox.global{ border-top:3px solid var(--teal); }
+  .verbox.local{ border-top:3px solid var(--amber); }
+  .verbox h6{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.7px;
+    margin-bottom:4px; }
+  .verbox.global h6{ color:var(--teal); }
+  .verbox.local h6{ color:var(--amber); }
+  .verbox .vdesc{ font-size:11.5px; color:var(--ink-faint); line-height:1.45; margin-bottom:12px; }
+  .subrow{ display:flex; gap:7px; align-items:flex-start; margin-bottom:8px; }
+  .subrow .sref{ width:38px; flex-shrink:0; text-align:center; font-family:var(--mono); font-size:12px;
+    border:1.5px solid var(--line); border-radius:5px; padding:8px 2px; }
+  .subrow textarea{ flex:1; min-height:56px; resize:vertical; font-size:13px; line-height:1.45;
+    border:1.5px solid var(--line); border-radius:5px; padding:8px 9px; }
+  .subrow .del{ border:none; background:transparent; color:var(--ink-faint); cursor:pointer;
+    font-size:13px; padding:6px 4px; border-radius:4px; flex-shrink:0; }
+  .subrow .del:hover{ color:var(--red); background:var(--red-bg); }
+  .verbox .addsub{ width:100%; border:1.5px dashed var(--line); background:transparent;
+    color:var(--ink-soft); border-radius:6px; padding:9px; cursor:pointer; font-size:12.5px; }
+  .verbox .addsub:hover{ border-color:var(--navy); color:var(--navy); }
+  .verbox .noneyet{ font-size:12.5px; color:var(--ink-faint); font-style:italic; margin-bottom:9px; }
+
+  .validate{ background:var(--amber-bg); border:1px solid #EBD6B4; border-radius:7px;
+    padding:12px 14px; margin-bottom:18px; font-size:13px; color:#7A4C0E; line-height:1.5; }
+  .validate ul{ margin:7px 0 0 17px; }
+  .validate li{ margin-bottom:3px; }
+
+  /* ---------- RUNNER ---------- */
+  .step-meta{ display:flex; align-items:baseline; gap:13px; margin-bottom:6px; flex-wrap:wrap; }
+  .step-counter{ font-family:var(--mono); font-size:11px; letter-spacing:1px; text-transform:uppercase;
+    color:var(--ink-faint); }
+  .office-tag{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.6px;
+    padding:3px 9px; border-radius:10px; color:#fff; }
+  .office-tag.back{ background:#12405B; }
+  .office-tag.front{ background:#2A9D8F; }
+  .step-title{ font-family:var(--mono); font-weight:700; font-size:clamp(21px,3.2vw,29px);
+    line-height:1.2; letter-spacing:-0.5px; margin-bottom:23px; }
+  .step-title .num{ color:var(--ink-faint); margin-right:10px; }
+
+  .versions{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:25px; }
+  .vcard{ background:var(--card); border:1.5px solid var(--line); border-radius:8px; padding:16px 18px; }
+  .vcard .vlabel{ font-family:var(--mono); font-size:11px; font-weight:700; width:24px; height:24px;
+    border-radius:5px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center;
+    margin-bottom:12px; }
+  .vcard ul{ list-style:none; }
+  .vcard li{ font-size:13.5px; line-height:1.55; padding-left:20px; position:relative; margin-bottom:9px; }
+  .vcard li:last-child{ margin-bottom:0; }
+  .vcard li::before{ content:attr(data-ref); position:absolute; left:0; top:1px;
+    font-family:var(--mono); font-size:10.5px; font-weight:600; color:var(--ink-faint); }
+  .vcard .empty-note{ font-size:13.5px; color:var(--ink-soft); font-style:italic; line-height:1.55; }
+
+  .doc-card{ background:var(--card); border:1px solid var(--line); border-radius:8px;
+    padding:18px 20px; margin-bottom:25px; }
+  .doc-card ul{ list-style:none; }
+  .doc-card li{ font-size:14.5px; line-height:1.6; padding-left:22px; position:relative; margin-bottom:10px; }
+  .doc-card li:last-child{ margin-bottom:0; }
+  .doc-card li::before{ content:attr(data-ref); position:absolute; left:0; top:1px;
+    font-family:var(--mono); font-size:11px; font-weight:600; color:var(--teal); }
+  .agree-note{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px;
+    color:var(--teal); margin-bottom:8px; }
+
+  .answers{ display:grid; gap:10px; margin-bottom:8px; }
+  .ans{ display:flex; align-items:center; gap:14px; background:var(--card);
+    border:1.5px solid var(--line); border-radius:8px; padding:15px 18px; cursor:pointer;
+    text-align:left; width:100%; transition:border-color .12s, background .12s; }
+  .ans:hover{ border-color:var(--ink-faint); }
+  .ans:focus-visible{ outline:2px solid var(--navy); outline-offset:2px; }
+  .ans .key{ font-family:var(--mono); font-size:11px; font-weight:700; width:22px; height:22px;
+    border-radius:4px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center; flex-shrink:0; }
+  .ans .txt{flex:1;}
+  .ans .txt strong{ display:block; font-size:15px; font-weight:600; margin-bottom:2px; }
+  .ans .txt span{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; }
+  .ans.sel{ border-color:var(--navy); background:#E6ECF2; }
+  .ans.sel .key{ background:var(--navy); color:#fff; }
+
+  /* mix builder */
+  .mixpick{ padding-top:16px; }
+  .mixpick-lead{ font-size:13px; color:var(--ink-soft); line-height:1.5; margin-bottom:14px; }
+  .mixpick-lead b{ color:var(--ink); font-weight:600; }
+  .mixerr{ margin-top:12px; font-size:12.5px; color:var(--red); background:var(--red-bg);
+    border:1px solid #E4C4BF; border-radius:6px; padding:8px 11px; }
+  .dnd{ display:grid; grid-template-columns:1fr 1.15fr; gap:14px; align-items:start; }
+  .pool-wrap{ display:grid; gap:10px; }
+  .pool,.seq{ background:var(--card); border:1.5px solid var(--line); border-radius:8px; padding:13px 14px; }
+  .pool h6,.seq h6{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.7px;
+    color:var(--ink-soft); margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .pool .plabel{ font-family:var(--mono); font-size:11px; font-weight:700; width:21px; height:21px;
+    border-radius:5px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center; }
+  .seq{ border-color:var(--navy); min-height:180px; }
+  .seq.drag-over{ background:#EDF2F7; }
+  .seq h6{ color:var(--navy); }
+  .chip{ display:flex; gap:9px; align-items:flex-start; background:var(--bg); border:1px solid var(--line);
+    border-radius:6px; padding:9px 10px; margin-bottom:6px; cursor:grab; font-size:12.5px; line-height:1.45; }
+  .chip:last-child{margin-bottom:0;}
+  .chip:hover{ border-color:var(--ink-faint); }
+  .chip.dragging{ opacity:0.4; }
+  .chip .grip{ font-family:var(--mono); color:var(--ink-faint); font-size:12px; margin-top:2px;
+    flex-shrink:0; letter-spacing:-1px; }
+  .chip .cref{ font-family:var(--mono); font-size:10px; font-weight:700; padding:2px 5px; border-radius:3px;
+    flex-shrink:0; margin-top:1px; background:#DCE4E8; color:var(--ink-soft); }
+  .chip .ctext{flex:1;}
+  .chip .drop-x,.chip .add-plus{ border:none; background:transparent; color:var(--ink-faint);
+    cursor:pointer; font-size:13px; padding:2px 4px; border-radius:3px; flex-shrink:0; }
+  .chip .drop-x:hover{ color:var(--red); background:var(--red-bg); }
+  .chip .add-plus:hover{ color:var(--navy); background:#E6ECF2; }
+  .chip.placed{ opacity:0.32; cursor:default; }
+  .chip.placed .add-plus{ visibility:hidden; }
+  .seq .chip{ background:#fff; border-color:#C3D2DC; }
+  .seq .chip .cref{ background:#E6ECF2; color:var(--navy); }
+  .seq .chip .ord{ font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--navy);
+    background:#E6ECF2; width:19px; height:19px; border-radius:50%; display:grid; place-items:center;
+    flex-shrink:0; margin-top:1px; }
+  .seq .chip.custom{ border-color:var(--violet); background:#FAF8FE; }
+  .seq .chip.custom .cref,.seq .chip.custom .ord{ background:var(--violet-bg); color:var(--violet); }
+  .seq-empty{ font-size:12.5px; color:var(--ink-faint); font-style:italic; border:1.5px dashed var(--line);
+    border-radius:6px; padding:22px 14px; text-align:center; }
+  .pool .none{ font-size:12.5px; color:var(--ink-faint); font-style:italic; }
+  .mixcount{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); margin-top:10px; text-align:right; }
+  .drop-line{ height:2px; background:var(--navy); border-radius:2px; margin:3px 0; }
+  .addcustom{ margin-top:10px; padding-top:12px; border-top:1px dashed var(--line); }
+  .addcustom label{ display:block; font-family:var(--mono); font-size:10px; text-transform:uppercase;
+    letter-spacing:0.7px; color:var(--violet); margin-bottom:8px; }
+  .addcustom .r{ display:flex; gap:7px; }
+  .addcustom input{ flex:1; font-size:13px; border:1.5px solid var(--line); border-radius:6px;
+    padding:9px 11px; min-width:0; }
+  .addcustom input:focus{ outline:2px solid var(--violet); border-color:var(--violet); }
+  .addcustom button{ font-family:var(--mono); font-size:11px; background:var(--violet); color:#fff;
+    border:none; padding:9px 15px; border-radius:6px; cursor:pointer; white-space:nowrap; }
+  .addcustom .hintline{ font-size:11.5px; color:var(--ink-faint); margin-top:7px; }
+
+  .followup{ padding-top:14px; }
+  .followup label{ display:block; font-size:13px; color:var(--ink-soft); margin-bottom:7px; }
+  .followup textarea{ width:100%; min-height:66px; resize:vertical; font-size:14px; line-height:1.5;
+    border:1.5px solid var(--line); border-radius:7px; padding:11px 12px; }
+  .followup textarea:focus{ outline:2px solid var(--navy); border-color:var(--navy); }
+
+  .nav{ display:flex; gap:10px; align-items:center; margin-top:25px; padding-top:20px;
+    border-top:1px solid var(--line-soft); }
+
+  /* summary */
+  .tally{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:20px 0 24px; }
+  .tally div{ background:var(--card); padding:14px 16px; }
+  .tally .n{ font-family:var(--mono); font-weight:700; font-size:22px; }
+  .tally .l{ font-size:10.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.5px;
+    margin-top:4px; line-height:1.35; }
+  .sum-row{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+    margin-bottom:9px; display:flex; gap:12px; align-items:flex-start; }
+  .sum-row .badge{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.4px; padding:5px 9px; border-radius:4px; white-space:nowrap; max-width:118px;
+    text-align:center; line-height:1.3; }
+  .badge.aligned{ background:var(--teal-bg); color:var(--teal); }
+  .badge.risk{ background:var(--red-bg); color:var(--red); }
+  .badge.stale{ background:var(--amber-bg); color:var(--amber); }
+  .badge.emergent{ background:var(--violet-bg); color:var(--violet); }
+  .badge.none{ background:#EEF1F2; color:var(--ink-faint); }
+  .sum-row .body{flex:1;}
+  .sum-row .name{ font-weight:600; font-size:14px; margin-bottom:3px; }
+  .sum-row .name .id{ font-family:var(--mono); color:var(--ink-faint); margin-right:7px; font-size:12.5px; }
+  .sum-row .note{ font-size:13px; color:var(--ink-soft); line-height:1.5; }
+  .sum-row .note em{ color:var(--ink-faint); }
+  .sum-row .action{ font-size:12.5px; margin-top:5px; line-height:1.45; padding-left:11px;
+    border-left:2px solid var(--line); }
+
+  /* ---------- MODAL ---------- */
+  .modal-back{
+    position:fixed; inset:0; background:rgba(11,37,69,0.5);
+    display:none; align-items:center; justify-content:center; padding:22px; z-index:100;
+    backdrop-filter:blur(2px);
+  }
+  .modal-back.show{ display:flex; }
+  .modal{
+    background:var(--card); border-radius:11px; width:100%; max-width:440px;
+    padding:24px 26px; box-shadow:0 18px 48px rgba(11,37,69,0.28);
+  }
+  .modal h3{ font-family:var(--mono); font-size:17px; font-weight:700; margin-bottom:8px; letter-spacing:-0.2px; }
+  .modal p.mbody{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; margin-bottom:17px; white-space:pre-line; }
+  .modal .mfield{ margin-bottom:17px; }
+  .modal .mfield label{ display:block; font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:0.7px; color:var(--ink-soft); margin-bottom:6px; }
+  .modal .mfield input{ width:100%; border:1.5px solid var(--line); border-radius:6px;
+    padding:11px 12px; font-size:14px; color:var(--ink); }
+  .modal .mfield input:focus{ outline:2px solid var(--navy); outline-offset:1px; border-color:var(--navy); }
+  .modal .merr{ font-size:12px; color:var(--red); margin-top:6px; min-height:15px; }
+  .modal .mactions{ display:flex; gap:9px; justify-content:flex-end; }
+
+  .regionpick{ display:flex; gap:7px; flex-wrap:wrap; }
+  .regionpick button{
+    border:1.5px solid var(--line); background:#fff; border-radius:6px;
+    padding:9px 15px; cursor:pointer; font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+  }
+  .regionpick button:hover{ border-color:var(--ink-faint); }
+  .regionpick button.on{ border-color:var(--navy); background:#E6ECF2; color:var(--navy); font-weight:600; }
+  .skipnote{
+    display:flex; gap:11px; align-items:flex-start;
+    background:var(--amber-bg); border:1px solid #EBD6B4; border-radius:8px;
+    padding:12px 15px; margin-top:16px;
+  }
+  .skipnote .si{ font-family:var(--mono); font-weight:700; color:var(--amber); flex-shrink:0; font-size:14px; }
+  .skipnote .st{ font-size:12.5px; color:#7A4C0E; line-height:1.5; }
+  .skipnote .st b{ font-weight:600; }
+  .skipchips{ display:flex; gap:7px; flex-wrap:wrap; justify-content:center; margin-top:14px; }
+  .skipchip{
+    font-family:var(--mono); font-size:11.5px;
+    background:#fff; border:1.5px solid #EBD6B4; color:#7A4C0E;
+    padding:7px 12px; border-radius:6px; cursor:pointer;
+  }
+  .skipchip:hover{ border-color:var(--amber); background:var(--amber-bg); }
+  .skipnote{ display:flex; gap:11px; align-items:flex-start; background:var(--amber-bg);
+    border:1px solid #EBD6B4; border-radius:8px; padding:12px 15px; margin-top:16px; }
+  .skipnote .si{ font-family:var(--mono); font-weight:700; color:var(--amber); flex-shrink:0; font-size:14px; }
+  .skipnote .st{ font-size:12.5px; color:#7A4C0E; line-height:1.5; }
+  .skipnote .st b{ font-weight:600; }
+  .skipchips{ display:flex; gap:7px; flex-wrap:wrap; justify-content:center; margin-top:14px; }
+  .skipchip{ font-family:var(--mono); font-size:11.5px; background:#fff;
+    border:1.5px solid #EBD6B4; color:#7A4C0E; padding:7px 12px; border-radius:6px; cursor:pointer; }
+  .skipchip:hover{ border-color:var(--amber); background:var(--amber-bg); }
+  .region-badge{
+    font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:0.5px;
+    background:#1F4E79; color:#CFE3EF; padding:4px 9px; border-radius:4px;
+  }
+
+  /* ---------- ROLE GATE ---------- */
+  .gate{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px; }
+  .gatecard{
+    background:var(--card); border:1.5px solid var(--line); border-radius:11px;
+    padding:26px 24px; cursor:pointer; text-align:left;
+    transition:border-color .14s, transform .08s, box-shadow .14s;
+  }
+  .gatecard:hover{ border-color:var(--navy); transform:translateY(-2px);
+    box-shadow:0 8px 22px rgba(11,37,69,0.09); }
+  .gatecard .gi{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.7px;
+    text-transform:uppercase; padding:5px 10px; border-radius:5px; display:inline-block; margin-bottom:14px;
+  }
+  .gatecard.user .gi{ background:var(--teal-bg); color:var(--teal); }
+  .gatecard.admin .gi{ background:#E6ECF2; color:var(--navy); }
+  .gatecard h3{ font-family:var(--mono); font-size:19px; font-weight:700; margin-bottom:8px;
+    letter-spacing:-0.3px; }
+  .gatecard p{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; margin-bottom:14px; }
+  .gatecard ul{ list-style:none; }
+  .gatecard li{ font-size:12.5px; color:var(--ink-faint); line-height:1.5; padding-left:16px;
+    position:relative; margin-bottom:5px; }
+  .gatecard li::before{ content:"—"; position:absolute; left:0; }
+  .gatenote{ font-size:12px; color:var(--ink-faint); line-height:1.5; margin-top:18px;
+    padding-top:14px; border-top:1px solid var(--line); max-width:600px; }
+
+  @media (max-width:700px){
+    .vergrid, .versions, .dnd{ grid-template-columns:1fr; }
+    .stage{ padding:24px 16px 50px; }
+    .topbar,.progress-strip{ padding-left:16px; padding-right:16px; }
+  }
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div><div class="t" style="font-family:var(--mono);font-weight:600;font-size:14px">Process Review</div></div>
+  <div class="crumb" id="crumb"></div>
+  <div class="spacer"></div>
+  <div class="row" id="topActions"></div>
+</div>
+
+<div id="progressHost"></div>
+<div class="stage"><div class="sheet" id="sheet"></div></div>
+
+<div class="modal-back" id="regionBack">
+  <div class="modal">
+    <h3>Before you start</h3>
+    <p class="mbody">Recorded against every answer so results can be compared across regions later. This can't be changed once the review starts.</p>
+    <div class="mfield">
+      <label>Region</label>
+      <div class="regionpick" id="regionPick"></div>
+      <div class="merr" id="rErr"></div>
+    </div>
+    <div class="mfield">
+      <label>Your name</label>
+      <input type="text" id="rName" placeholder="Who is completing this review" autocomplete="off">
+      <div class="merr" id="rNameErr"></div>
+    </div>
+    <div class="mactions">
+      <button class="btn" id="rCancel">Cancel</button>
+      <button class="btn primary" id="rOk">Start review</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<script>
+/* ============================================================
+   PARTICIPANT INTERFACE
+   Deploy at /review — open to the regional teams.
+   Contains no authoring, editing, import, or results surface.
+   The classification of answers is never shown here.
+   ============================================================ */
+
+const ANS_DIFFER = [
+  {val:"a",    key:"1", title:"A",                     sub:"What we do looks like version A."},
+  {val:"b",    key:"2", title:"B",                     sub:"What we do looks like version B."},
+  {val:"mix",  key:"3", title:"A mix of both",         sub:"Build the actual sequence from both versions."},
+  {val:"skip", key:"4", title:"We don't do this step", sub:"Skipped entirely, or handled by another team."}
+];
+const ANS_AGREE = [
+  {val:"same",   key:"1", title:"Yes — that's what we do", sub:"Practice matches what's written."},
+  {val:"partial",key:"2", title:"Partly — we do less",     sub:"Some of this doesn't happen in practice."},
+  {val:"extra",  key:"3", title:"We do more than this",    sub:"Extra work happens that isn't written down."},
+  {val:"skip",   key:"4", title:"We don't do this step",   sub:"Skipped entirely, or handled by another team."}
+];
+const FOLLOWUP = {
+  a:"Anything you do differently from version A? One line is fine.",
+  b:"Anything you do differently from version B? One line is fine.",
+  mix:"Anything else worth noting about how this runs? (Optional)",
+  skip:"In one line — why is it skipped, or who does it instead?",
+  same:"Anything worth noting? (Optional)",
+  partial:"In one line — which parts don't happen?",
+  extra:"In one line — what extra work happens here?"
+};
+
+
+
+
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let DB = { index:[] };
+let PROC = null;
+let SESS = { responses:{}, assign:{} };
+let view = { v:'home', stepIdx:0 };
+
+function esc(s){ const d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
+
+function aIsFor(step){
+  if(!SESS.assign[step.id]){
+    SESS.assign[step.id] = Math.random() < 0.5 ? 'local' : 'global';
+    saveSession();
+  }
+  return SESS.assign[step.id];
+}
+
+async function openProc(id){
+  PROC = await sGet('proc:'+id, null);
+  SESS = await sGet('sess:'+id, {responses:{}, assign:{}});
+  if(!SESS.responses) SESS.responses = {};
+  if(!SESS.assign) SESS.assign = {};
+}
+async function saveSession(){
+  if(!PROC) return;
+  try{ await sSet('sess:'+PROC.id, SESS); flagSaved(); }
+  catch(e){ saveFailed(e.message || 'unknown error'); }
+}
+async function saveIndex(){
+  try{ await sSet('proc:index', DB.index); }catch(e){ saveFailed(e.message); }
+}
+
+function nav(next){ view = Object.assign({v:'home', stepIdx:0}, next); render(); window.scrollTo(0,0); }
+
+let saveTimer;
+function flagSaved(){
+  const h = document.getElementById('saveHint'); if(!h) return;
+  h.textContent = 'Saved'; h.style.color = '';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{ if(h) h.textContent=''; }, 1200);
+}
+function saveFailed(msg){
+  const h = document.getElementById('saveHint'); if(!h) return;
+  h.textContent = 'Not saved: ' + (msg||'see console'); h.style.color = '#FF9C8A';
+  console.error('save failed:', msg);
+}
+
+const REGIONS = ['US','AU','EMEA','NZ','SG','DE','HK','JP','KR','NB','SH','SZ','TH','TW','VN'];
+
+let regionResolve = null, regionSel = null;
+
+function askRegion(){
+  return new Promise(resolve=>{
+    regionResolve = resolve; regionSel = null;
+    document.getElementById('rErr').textContent = '';
+    document.getElementById('rNameErr').textContent = '';
+    document.getElementById('rName').value = '';
+    const host = document.getElementById('regionPick');
+    host.innerHTML = REGIONS.map(r=>`<button data-r="${r}">${r}</button>`).join('');
+    host.querySelectorAll('button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        regionSel = b.dataset.r;
+        host.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        document.getElementById('rErr').textContent = '';
+      });
+    });
+    document.getElementById('regionBack').classList.add('show');
+  });
+}
+function closeRegion(val){
+  document.getElementById('regionBack').classList.remove('show');
+  const r = regionResolve; regionResolve = null;
+  if(r) r(val);
+}
+document.getElementById('rCancel').addEventListener('click', ()=>closeRegion(null));
+document.getElementById('rOk').addEventListener('click', ()=>{
+  const nm = document.getElementById('rName').value.trim();
+  let bad = false;
+  if(!regionSel){ document.getElementById('rErr').textContent = 'Pick a region to continue.'; bad = true; }
+  if(!nm){ document.getElementById('rNameErr').textContent = 'Please enter your name.'; bad = true; }
+  if(bad) return;
+  closeRegion({ region: regionSel, name: nm });
+});
+document.getElementById('rName').addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('rOk').click(); }
+});
+
+
+
+async function captureRegion(){
+  const r = await askRegion();
+  if(!r) return false;
+  SESS.region = r.region; SESS.name = r.name;
+  SESS.startedAt = new Date().toISOString();
+  await saveSession();
+  const row = DB.index.find(x=>x.id===PROC.id);
+  if(row){ row.status='inprog'; await saveIndex(); }
+  return true;
+}
+
+async function runProcess(id){
+  await openProc(id);
+  if(!SESS.region){ const ok = await captureRegion(); if(!ok) return; }
+  nav({v:'run', stepIdx:0});
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function render(){
+  const crumb=document.getElementById('crumb'), acts=document.getElementById('topActions'),
+        prog=document.getElementById('progressHost'), sheet=document.getElementById('sheet');
+  prog.innerHTML=''; sheet.className='sheet';
+
+  if(view.v==='home'){
+    crumb.innerHTML='Available reviews'; acts.innerHTML='';
+    renderHome(sheet);
+  } else if(view.v==='run'){
+    crumb.innerHTML=`<b>${esc(PROC.name)}</b>`;
+    acts.innerHTML=`
+      ${SESS.region?`<span class="region-badge">${esc(SESS.region)} · ${esc(SESS.name)}</span>`:''}
+      <span class="save-hint" id="saveHint" style="color:#8FB0C4"></span>
+      <button class="ghost-btn" onclick="nav({v:'home'})">Exit</button>`;
+    renderProgress(prog);
+    if(view.stepIdx >= PROC.steps.length) renderDone(sheet); else renderStep(sheet);
+  }
+}
+
+function renderHome(host){
+  const ready = DB.index.filter(r=>(r.steps||0)>0);
+  if(!ready.length){
+    host.innerHTML = `<h2 class="page">Available reviews</h2>
+      <div class="empty-state"><h3>Nothing to review yet</h3>
+      <p>No processes have been set up. Ask your administrator to add one.</p></div>`;
+    return;
+  }
+  host.innerHTML = `
+    <h2 class="page">Available reviews</h2>
+    <p class="lede">Pick a process to review. You'll be asked for your region and name before you start. There are no right answers — record what actually happens.</p>
+    <div class="plist">${ready.map(r=>`
+      <div class="pcard">
+        <div class="pinfo">
+          <div class="pname">${esc(r.name)}</div>
+          <div class="pmeta">${r.steps} step${r.steps===1?'':'s'}${r.domain?'<span class="sep">·</span>'+esc(r.domain):''}</div>
+        </div>
+        <button class="btn primary" onclick="runProcess('${r.id}')">Start review</button>
+      </div>`).join('')}</div>`;
+}
+
+
+function renderProgress(host){
+  const pips = PROC.steps.map((s,i)=>{
+    const st = stepState(s, i);
+    const lbl = st==='answered' ? 'answered' : st==='skipped' ? 'skipped — no answer recorded' : 'not yet reached';
+    return `<div class="pip ${st} ${i===view.stepIdx?'current':''}" title="${esc(s.id)} ${esc(s.name)} — ${lbl}" onclick="goTo(${i})"></div>`;
+  }).join('');
+  host.innerHTML = `<div class="progress-strip">${pips}
+    <div class="pip ${view.stepIdx===PROC.steps.length?'current':''}" title="Finish" onclick="goTo(${PROC.steps.length})"></div>
+  </div>`;
+}
+/* Cross-validation: a mix answer whose sequence is EXACTLY one card's
+   full sub-step set isn't a mix — it's an A or a B answer in disguise.
+   Returns 'a' | 'b' | null. */
+function mixIsPlainCopy(step){
+  const seq = (SESS.responses[step.id]||{}).picks || [];
+  if(!seq.length || seq.some(k=>k.startsWith('c:'))) return null;   // customs = genuinely a mix
+  const aIs = aIsFor(step)==='local' ? step.local : step.global;
+  const bIs = aIsFor(step)==='local' ? step.global : step.local;
+  const refs = seq.map(k=>k.split(':')[1]);
+  // order-sensitive: a reordered sequence is a different practice, not a copy
+  const sameOrdered = arr => arr.length===refs.length && arr.every((d,i)=> d.ref===refs[i]);
+  if(aIs.length && sameOrdered(aIs)) return 'a';
+  if(bIs.length && sameOrdered(bIs)) return 'b';
+  return null;
+}
+const MIX_COPY_MSG = copy => `The sequence you built matches <b>Card ${copy.toUpperCase()}</b> exactly — pick <b>${copy.toUpperCase()}</b> instead if that's what you do, or adjust the mix so it reflects what actually happens.`;
+
+function goTo(i){
+  // a "mix" answer must be a real mix: non-empty, and not just a
+  // verbatim copy of card A or card B
+  const cur = PROC.steps[view.stepIdx];
+  if(cur && i !== view.stepIdx){
+    const r = SESS.responses[cur.id]||{};
+    if(r.val==='mix'){
+      const e = document.getElementById('mixErr');
+      if(!(r.picks||[]).length){
+        if(e) e.innerHTML = 'Add at least one step to <b>What we actually do</b> before continuing.';
+        return;
+      }
+      const copy = mixIsPlainCopy(cur);
+      if(copy){
+        if(e) e.innerHTML = MIX_COPY_MSG(copy);
+        return;
+      }
+    }
+  }
+  // mark the step we're leaving as seen — that's what makes an unanswered
+  // step a deliberate skip rather than one the reviewer never reached
+  if(cur){
+    SESS.visited = SESS.visited || {};
+    if(!SESS.visited[cur.id]){ SESS.visited[cur.id] = true; saveSession(); }
+  }
+  view.stepIdx = Math.max(0, Math.min(PROC.steps.length, i));
+  render(); window.scrollTo(0,0);
+}
+
+function stepState(s, i){
+  const answered = !!(SESS.responses[s.id]||{}).val;
+  if(answered) return 'answered';
+  if((SESS.visited||{})[s.id]) return 'skipped';
+  return 'untouched';
+}
+function skippedSteps(){
+  return PROC.steps.filter((s,i)=>stepState(s,i)==='skipped');
+}
+function unansweredSteps(){
+  return PROC.steps.filter(s=>!(SESS.responses[s.id]||{}).val);
+}
+
+function listHTML(arr, emptyMsg){
+  if(!arr || !arr.length) return `<p class="empty-note">${esc(emptyMsg)}</p>`;
+  return `<ul>${arr.map(d=>`<li data-ref="${esc(d.ref)}">${esc(d.text)}</li>`).join('')}</ul>`;
+}
+
+function renderStep(host){
+  const s = PROC.steps[view.stepIdx];
+  const saved = SESS.responses[s.id] || {};
+
+  let procHTML;
+  if(s.agree){
+    procHTML = `
+      <div class="label">What the procedure says<span class="hint">Both documents describe this step the same way.</span></div>
+      <div class="doc-card">
+        <div class="agree-note">Both versions agree</div>
+        ${listHTML(s.global, "Nothing documented.")}
+      </div>`;
+  } else {
+    const aIs = aIsFor(s);
+    const aData = aIs==='local' ? s.local : s.global;
+    const bData = aIs==='local' ? s.global : s.local;
+    const em = "This version has nothing written for this step.";
+    procHTML = `
+      <div class="label">Two versions of this step exist<span class="hint">Read both, then pick the one closest to what you actually do. Which document each version came from stays hidden for the whole session.</span></div>
+      <div class="versions">
+        <div class="vcard"><span class="vlabel">A</span>${listHTML(aData, em)}</div>
+        <div class="vcard"><span class="vlabel">B</span>${listHTML(bData, em)}</div>
+      </div>`;
+  }
+
+  const set = s.agree ? ANS_AGREE : ANS_DIFFER;
+  const answersHTML = set.map(a=>`
+    <button class="ans ${saved.val===a.val?'sel':''}" onclick="pick('${a.val}')">
+      <span class="key">${a.key}</span>
+      <span class="txt"><strong>${a.title}</strong><span>${a.sub}</span></span>
+    </button>`).join('');
+
+  const mixEmpty = saved.val==='mix' && !(saved.picks||[]).length;
+  const mixCopy = (!mixEmpty && saved.val==='mix') ? mixIsPlainCopy(s) : null;
+  const mixHTML = (!s.agree && saved.val==='mix')
+    ? `<div class="mixpick">
+         <p class="mixpick-lead">Drag the steps you actually do into <b>What we actually do</b>, in the order you do them. Pull from either version — or both. Anything you don't do, leave behind.</p>
+         <div id="mixHost"></div>
+         <div class="mixerr" id="mixErr">${mixEmpty?'Add at least one step to <b>What we actually do</b> before continuing.':mixCopy?MIX_COPY_MSG(mixCopy):''}</div>
+       </div>` : '';
+
+  host.innerHTML = `
+    <div class="step-meta">
+      <span class="step-counter">Step ${view.stepIdx+1} of ${PROC.steps.length}</span>
+    </div>
+    <h1 class="step-title"><span class="num">${esc(s.id)}</span>${esc(s.name)}</h1>
+    ${procHTML}
+    <div class="label">${s.agree?'Does this match what actually happens?':'Which is closer to what actually happens?'}</div>
+    <div class="answers">${answersHTML}</div>
+    ${mixHTML}
+    ${saved.val ? `<div class="followup">
+      <label>${esc(FOLLOWUP[saved.val]||'')}</label>
+      <textarea id="fuText" placeholder="Short answer is fine.">${esc(saved.note||'')}</textarea>
+    </div>` : ''}
+    ${(!saved.val && (SESS.visited||{})[s.id]) ? `
+      <div class="skipnote">
+        <span class="si">!</span>
+        <span class="st">You've passed this step without answering. It'll be recorded as <b>no answer</b> — which isn't the same as telling us you don't do it.
+        If the step genuinely doesn't happen in your region, pick <b>“We don't do this step”</b> instead.</span>
+      </div>` : ''}
+    <div class="nav">
+      <button class="btn" onclick="goTo(${view.stepIdx-1})" ${view.stepIdx===0?'disabled':''}>← Back</button>
+      <span class="spacer"></span>
+      <button class="btn primary" onclick="goTo(${view.stepIdx+1})">${view.stepIdx===PROC.steps.length-1?'Finish →':(saved.val?'Next step →':'Skip for now →')}</button>
+    </div>`;
+
+  const ta = document.getElementById('fuText');
+  if(ta) ta.addEventListener('input', ()=>{
+    const c = SESS.responses[s.id] || {};
+    c.note = ta.value; SESS.responses[s.id] = c;
+    flagSaved(); saveSession();
+  });
+
+  if(!s.agree && saved.val==='mix') renderMix(s);
+}
+
+function pick(val){
+  const s = PROC.steps[view.stepIdx];
+  const c = SESS.responses[s.id] || {};
+  if(c.val!==val && val!=='mix'){ delete c.picks; delete c.customs; }
+  c.val = val; SESS.responses[s.id] = c;
+  saveSession(); render();
+  if(val!=='mix') setTimeout(()=>{ const t=document.getElementById('fuText'); if(t) t.focus(); },120);
+}
+
+/* ---------- mix builder ---------- */
+function subStepText(step, key){
+  const [side, ref] = key.split(':');
+  if(side==='c'){
+    const c = SESS.responses[step.id]||{};
+    return (c.customs && c.customs[ref]) ? c.customs[ref] : '';
+  }
+  const aIsLocal = aIsFor(step)==='local';
+  const isLocal = (side==='a') ? aIsLocal : !aIsLocal;
+  const arr = isLocal ? step.local : step.global;
+  const f = (arr||[]).find(d=>d.ref===ref);
+  return f ? f.text : '';
+}
+
+function renderMix(step){
+  const host = document.getElementById('mixHost');
+  if(!host) return;
+  const cur = SESS.responses[step.id]||{};
+  const seq = cur.picks || [];
+  const mAIs = aIsFor(step);
+  const aData = mAIs==='local' ? step.local : step.global;
+  const bData = mAIs==='local' ? step.global : step.local;
+
+  const chip = (d, side)=>{
+    const key = side+':'+d.ref, placed = seq.includes(key);
+    return `<div class="chip ${placed?'placed':''}" draggable="${placed?'false':'true'}" data-key="${esc(key)}" data-from="pool">
+      <span class="grip">⣿</span><span class="cref">${esc(d.ref)}</span>
+      <span class="ctext">${esc(d.text)}</span>
+      <button class="add-plus" data-add="${esc(key)}" title="Add">＋</button></div>`;
+  };
+  const pool = (data, side, L)=>`<div class="pool"><h6><span class="plabel">${L}</span> Version ${L}</h6>
+    ${(data&&data.length)?data.map(d=>chip(d,side)).join(''):'<p class="none">Nothing written in this version.</p>'}</div>`;
+
+  const seqHTML = seq.length ? seq.map((k,i)=>{
+      const isC = k.split(':')[0]==='c';
+      return `<div class="chip ${isC?'custom':''}" draggable="true" data-key="${esc(k)}" data-from="seq">
+        <span class="ord">${i+1}</span><span class="cref">${isC?'NEW':esc(k.split(':')[1])}</span>
+        <span class="ctext">${esc(subStepText(step,k))}</span>
+        <button class="drop-x" data-remove="${esc(k)}" title="Remove">✕</button></div>`;
+    }).join('') : `<div class="seq-empty">Drag steps here, or use ＋ — then drag to reorder.</div>`;
+
+  host.innerHTML = `
+    <div class="dnd">
+      <div class="pool-wrap">${pool(aData,'a','A')}${pool(bData,'b','B')}</div>
+      <div class="seq" id="seqZone">
+        <h6>What we actually do — in order</h6>
+        <div id="seqList">${seqHTML}</div>
+        <div class="addcustom">
+          <label>Something we do that's in neither version</label>
+          <div class="r"><input type="text" id="customInput" placeholder="Describe the step in your own words…">
+          <button id="customAdd">Add step</button></div>
+          <p class="hintline">Added to the end — drag it into position afterwards.</p>
+        </div>
+      </div>
+    </div>
+    <div class="mixcount">${seq.length} step${seq.length===1?'':'s'} in sequence</div>`;
+  bindMix(step);
+}
+
+function saveSeq(step, seq){
+  const c = SESS.responses[step.id]||{};
+  c.picks = seq; SESS.responses[step.id]=c;
+  const me = document.getElementById('mixErr');
+  if(me) me.textContent = '';
+  flagSaved(); saveSession(); renderMix(step);
+  // live cross-validation: the moment the sequence becomes an exact
+  // copy of A or B, say so instead of waiting for the Next click
+  const copy = seq.length ? mixIsPlainCopy(step) : null;
+  if(copy && me) me.innerHTML = MIX_COPY_MSG(copy);
+}
+
+function bindMix(step){
+  const cur = SESS.responses[step.id]||{};
+  let seq = (cur.picks||[]).slice();
+  const host=document.getElementById('mixHost'),
+        zone=document.getElementById('seqZone'),
+        list=document.getElementById('seqList');
+  if(!host||!zone||!list) return;
+
+  host.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation();
+    if(!seq.includes(b.dataset.add)){ seq.push(b.dataset.add); saveSeq(step,seq); }
+  }));
+  host.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation();
+    const k=b.dataset.remove;
+    seq=seq.filter(x=>x!==k);
+    if(k.split(':')[0]==='c'){
+      const c=SESS.responses[step.id]||{};
+      if(c.customs) delete c.customs[k.split(':')[1]];
+      SESS.responses[step.id]=c;
+    }
+    saveSeq(step,seq);
+  }));
+
+  const ci=document.getElementById('customInput'), cb=document.getElementById('customAdd');
+  function addCustom(){
+    const t=(ci.value||'').trim(); if(!t){ ci.focus(); return; }
+    const c=SESS.responses[step.id]||{}; c.customs=c.customs||{};
+    const id='c'+Date.now().toString(36).slice(-5);
+    c.customs[id]=t; SESS.responses[step.id]=c;
+    seq.push('c:'+id); ci.value='';
+    saveSeq(step,seq);
+    setTimeout(()=>{ const el=document.getElementById('customInput'); if(el) el.focus(); },60);
+  }
+  if(cb) cb.addEventListener('click',addCustom);
+  if(ci) ci.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCustom(); }});
+
+  let dragKey=null, dragFrom=null;
+  host.querySelectorAll('.chip[draggable="true"]').forEach(ch=>{
+    ch.addEventListener('dragstart',e=>{
+      dragKey=ch.dataset.key; dragFrom=ch.dataset.from;
+      ch.classList.add('dragging'); e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',dragKey);
+    });
+    ch.addEventListener('dragend',()=>{ ch.classList.remove('dragging'); clearLine(); });
+  });
+  function clearLine(){ list.querySelectorAll('.drop-line').forEach(l=>l.remove()); }
+  function idxFor(y){
+    const chips=Array.from(list.querySelectorAll('.chip:not(.dragging)'));
+    for(let i=0;i<chips.length;i++){
+      const r=chips[i].getBoundingClientRect();
+      if(y < r.top+r.height/2) return i;
+    }
+    return chips.length;
+  }
+  zone.addEventListener('dragover',e=>{
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    zone.classList.add('drag-over'); clearLine();
+    const i=idxFor(e.clientY), chips=Array.from(list.querySelectorAll('.chip:not(.dragging)'));
+    const line=document.createElement('div'); line.className='drop-line';
+    if(i>=chips.length) list.appendChild(line); else list.insertBefore(line,chips[i]);
+  });
+  zone.addEventListener('dragleave',e=>{ if(!zone.contains(e.relatedTarget)){ zone.classList.remove('drag-over'); clearLine(); }});
+  zone.addEventListener('drop',e=>{
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const i=idxFor(e.clientY); clearLine();
+    if(!dragKey) return;
+    const w=seq.filter(x=>x!==dragKey);
+    w.splice(Math.max(0,Math.min(w.length,i)),0,dragKey);
+    seq=w; saveSeq(step,seq);
+  });
+  host.querySelectorAll('.pool').forEach(p=>{
+    p.addEventListener('dragover',e=>{ if(dragFrom==='seq') e.preventDefault(); });
+    p.addEventListener('drop',e=>{
+      if(dragFrom!=='seq') return;
+      e.preventDefault(); seq=seq.filter(x=>x!==dragKey); saveSeq(step,seq);
+    });
+  });
+}
+
+/* ---------- resolution + summary ---------- */
+function resolvePicks(step, picks){
+  if(!picks||!picks.length) return null;
+  const aIsLocal = aIsFor(step)==='local';
+  const resp = SESS.responses[step.id]||{};
+  const out={local:[],global:[],custom:[],order:[]};
+  picks.forEach(k=>{
+    const [side,ref]=k.split(':');
+    if(side==='c'){
+      out.custom.push((resp.customs&&resp.customs[ref])?resp.customs[ref]:'(untitled)');
+      out.order.push('NEW'); return;
+    }
+    const isLocal = (side==='a')?aIsLocal:!aIsLocal;
+    out[isLocal?'local':'global'].push(ref);
+    out.order.push((isLocal?'L':'G')+ref);
+  });
+  return out;
+}
+function picksText(step,picks){
+  const r=resolvePicks(step,picks); if(!r) return '';
+  const p=[];
+  if(r.local.length)  p.push(PROC.localLabel+': '+r.local.join(', '));
+  if(r.global.length) p.push(PROC.globalLabel+': '+r.global.join(', '));
+  if(r.custom.length) p.push('In neither document: '+r.custom.join('; '));
+  p.push('Order: '+r.order.join(' → '));
+  return p.join('  ·  ');
+}
+
+/* Participants see a completion screen, not the classification.
+   Labelling someone's own answers "compliance risk" back at them is
+   both alarming and pointless — they can't action it — and the
+   summary reveals which card was which, which we hid on purpose. */
+function renderDone(host){
+  // mark the session complete in the DB once, when the participant
+  // reaches the done screen — the analysis view only counts complete sessions
+  if(SESS.id && !SESS.submitted){ SESS.submitted = true; dbCompleteSession(SESS.id).catch(e=>saveFailed(e.message)); }
+  const missing = unansweredSteps();
+  const total = PROC.steps.length;
+  const answered = total - missing.length;
+  const done = missing.length === 0;
+
+  host.innerHTML = `
+    <div class="empty-state" style="border-style:solid; background:${done?'var(--teal-bg)':'var(--amber-bg)'};
+         border-color:${done?'var(--teal)':'#EBD6B4'}">
+      <h3 style="color:${done?'var(--teal)':'var(--amber)'}">${done?'Review complete':'Almost done'}</h3>
+      <p style="color:${done?'#134F45':'#7A4C0E'}">
+        ${done
+          ? `Thanks — all ${total} steps answered for <b>${esc(PROC.name)}</b>, recorded against <b>${esc(SESS.region)}</b>.`
+          : `You've answered <b>${answered} of ${total}</b> steps for <b>${esc(PROC.name)}</b>.
+             ${missing.length} step${missing.length===1?'':'s'} ${missing.length===1?'has':'have'} no answer recorded —
+             that's different from saying you don't do ${missing.length===1?'it':'them'}, so it's worth going back if you can.`}
+      </p>
+      ${done ? '' : `<div class="skipchips">${missing.map(s=>{
+        const i = PROC.steps.indexOf(s);
+        return `<button class="skipchip" onclick="goTo(${i})">${esc(s.id)} ${esc(s.name)}</button>`;
+      }).join('')}</div>`}
+      <div class="row" style="justify-content:center; margin-top:${done?'0':'18px'}">
+        <button class="btn" onclick="goTo(0)">Review my answers</button>
+        <button class="btn primary" onclick="nav({v:'home'})">${done?'Done':'Submit anyway'}</button>
+      </div>
+    </div>
+    <p class="lede" style="text-align:center; margin:20px auto 0">Your answers are compared against other regions by the process owner. Nothing is scored or judged here.</p>`;
+}
+
+
+
+/* Participants see a completion screen, not the classification.
+   Labelling someone's own answers "compliance risk" back at them is
+   both alarming and pointless — they can't action it — and the
+   summary reveals which card was which, which we hid on purpose. */
+/* keyboard */
+document.addEventListener('keydown',e=>{
+  if(view.v!=='run') return;
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+  if(view.stepIdx>=PROC.steps.length) return;
+  const set = PROC.steps[view.stepIdx].agree ? ANS_AGREE : ANS_DIFFER;
+  const a = set.find(x=>x.key===e.key);
+  if(a){ pick(a.val); return; }
+  if(e.key==='ArrowRight') goTo(view.stepIdx+1);
+  if(e.key==='ArrowLeft')  goTo(view.stepIdx-1);
+});
+
+/* surface uncaught errors in the top bar so a failed save can't hide */
+window.addEventListener('error', e=>{
+  const h = document.getElementById('saveHint');
+  if(h){ h.textContent = 'Error: ' + (e.message||'unknown'); h.style.color = '#FF9C8A'; }
+});
+
+(async function(){
+  DB.index = await sGet('proc:index', null) || [];
+  render();
+})();
+</script>
+</body>
+</html>

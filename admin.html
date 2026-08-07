@@ -1,0 +1,2561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Review — Administration</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg:#EDF1F2; --card:#FFFFFF;
+    --ink:#0F2331; --ink-soft:#5A7183; --ink-faint:#8CA0AE;
+    --navy:#0B2545; --teal:#1F7A6C; --teal-bg:#E4F1EE;
+    --amber:#C77B18; --amber-bg:#FBF0DE;
+    --red:#A93B2E; --red-bg:#F8E4E1;
+    --violet:#5B4A8A; --violet-bg:#ECE8F5;
+    --line:#D3DDE1; --line-soft:#E5EBEE;
+    /* analysis status palette (maps onto the app's verdicts:
+       risk→coverage, stale→source, emergent stays emergent) */
+    --aligned:#1F7A6C;   --aligned-bg:#E4F1EE;
+    --ownership:#3A6EA5; --ownership-bg:#E4EDF6;
+    --source:#C77B18;    --source-bg:#FBF0DE;
+    --coverage:#A93B2E;  --coverage-bg:#F8E4E1;
+    --omission:#7A2118;  --omission-bg:#F3D9D5;
+    --sequence:#6B7A8F;  --sequence-bg:#EAEEF2;
+    --emergent:#5B4A8A;  --emergent-bg:#ECE8F5;
+    --none:#B9C6CC;      --none-bg:#F0F3F4;
+    --mono:'IBM Plex Mono', monospace; --sans:'IBM Plex Sans', sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{ background:var(--bg); color:var(--ink); font-family:var(--sans);
+        display:flex; flex-direction:column; min-height:100vh; }
+  button{font-family:inherit;}
+  input,textarea,select{font-family:inherit;}
+
+  /* ---------- CHROME ---------- */
+  .topbar{ background:var(--navy); color:#EAF1F4; padding:12px 24px;
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .topbar .brand{ font-family:var(--mono); font-weight:600; font-size:14px; cursor:pointer; }
+  .topbar .crumb{ font-size:12px; color:#8FB0C4; }
+  .topbar .crumb b{ color:#EAF1F4; font-weight:500; }
+  .topbar .spacer{flex:1;}
+  .ghost-btn{ background:transparent; border:1px solid #35597A; color:#B7CCD8;
+    font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.6px;
+    padding:6px 12px; border-radius:4px; cursor:pointer; }
+  .ghost-btn:hover{ background:#173654; color:#fff; }
+  .ghost-btn.warn:hover{ background:#5A2019; border-color:#8A3428; color:#fff; }
+
+  .progress-strip{ display:flex; gap:3px; padding:10px 24px; background:#0E2C51; }
+  .pip{ flex:1; height:5px; border-radius:3px; background:#20456B; cursor:pointer; }
+  .pip:hover{ background:#2E5C88; }
+  .pip.answered{ background:#4E92B8; }
+  .pip.current{ background:#EAF1F4; }
+
+  .stage{ flex:1; display:flex; justify-content:center; padding:34px 24px 70px; }
+  .sheet{ width:100%; max-width:880px; }
+  .sheet.wide{ max-width:1040px; }
+
+  /* ---------- SHARED ---------- */
+  h2.page{ font-family:var(--mono); font-weight:700; font-size:24px; letter-spacing:-0.4px; margin-bottom:7px; }
+  p.lede{ font-size:14px; color:var(--ink-soft); line-height:1.55; max-width:620px; margin-bottom:24px; }
+  .label{ font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.8px;
+          color:var(--ink-soft); margin-bottom:9px; }
+  .label .hint{ display:block; font-family:var(--sans); text-transform:none; letter-spacing:0;
+                font-size:12.5px; color:var(--ink-faint); margin-top:4px; font-weight:400; }
+  .btn{ font-family:var(--mono); font-size:12px; letter-spacing:0.4px; padding:10px 18px;
+        border-radius:6px; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+  .btn:hover{ border-color:var(--ink-faint); }
+  .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+  .btn.primary:hover{ background:#153A63; }
+  .btn.danger{ color:var(--red); border-color:#E4C4BF; }
+  .btn.danger:hover{ background:var(--red-bg); }
+  .btn.sm{ padding:7px 12px; font-size:11px; }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .row{ display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+  .spacer{flex:1;}
+  .save-hint{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+
+  input[type=text].fld, textarea.fld, select.fld{
+    width:100%; border:1.5px solid var(--line); border-radius:6px; padding:10px 12px;
+    font-size:14px; color:var(--ink); background:#fff; }
+  textarea.fld{ min-height:64px; resize:vertical; line-height:1.5; }
+  input.fld:focus, textarea.fld:focus, select.fld:focus{
+    outline:2px solid var(--navy); outline-offset:1px; border-color:var(--navy); }
+  .field{ margin-bottom:16px; }
+  .field > label{ display:block; font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+                  letter-spacing:0.7px; color:var(--ink-soft); margin-bottom:6px; }
+
+  .sectlabel{margin-bottom:10px}
+  .empty-state{ background:var(--card); border:1.5px dashed var(--line); border-radius:10px;
+    padding:44px 28px; text-align:center; }
+  .empty-state h3{ font-family:var(--mono); font-size:16px; margin-bottom:8px; }
+  .empty-state p{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; max-width:400px;
+    margin:0 auto 18px; }
+
+  /* ---------- PROCESS LIBRARY ---------- */
+  .plist{ display:grid; gap:11px; }
+  .pcard{ background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:17px 19px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .pcard .pinfo{ flex:1; min-width:220px; }
+  .pcard .pname{ font-weight:600; font-size:16px; margin-bottom:4px; }
+  .pcard .pmeta{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+  .pcard .pmeta .sep{ margin:0 7px; opacity:0.5; }
+  .statuschip{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.5px; padding:4px 8px; border-radius:4px; }
+  .statuschip.draft{ background:#EEF1F2; color:var(--ink-faint); }
+  .statuschip.ready{ background:var(--teal-bg); color:var(--teal); }
+  .statuschip.inprog{ background:var(--amber-bg); color:var(--amber); }
+  .statuschip.done{ background:#E6ECF2; color:var(--navy); }
+
+  /* ---------- ADMIN: STEP EDITOR ---------- */
+  .steplist{ display:grid; gap:9px; margin-bottom:18px; }
+  .sedit{ background:var(--card); border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .sedit.open{ border-color:var(--navy); }
+  .sedit-head{ display:flex; gap:12px; align-items:center; padding:13px 16px; cursor:pointer; }
+  .sedit-head .sid{ font-family:var(--mono); font-weight:700; font-size:12px; color:var(--navy);
+    background:var(--bg); border:1px solid var(--line); padding:3px 8px; border-radius:4px; white-space:nowrap; }
+  .sedit-head .sname{ flex:1; font-weight:600; font-size:14.5px; min-width:120px; }
+  .sedit-head .sname.untitled{ color:var(--ink-faint); font-weight:400; font-style:italic; }
+  .sedit-head .scount{ font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); }
+  .sedit-head .chev{ font-family:var(--mono); color:var(--ink-faint); transition:transform .2s; }
+  .sedit.open .chev{ transform:rotate(90deg); }
+  .sedit-body{ display:none; border-top:1px solid var(--line); padding:18px 16px; background:#FAFCFC; }
+  .sedit.open .sedit-body{ display:block; }
+
+  .officepick{ display:flex; gap:7px; }
+  .officepick button{ flex:1; border:1.5px solid var(--line); background:#fff; border-radius:6px;
+    padding:9px; cursor:pointer; font-size:13px; color:var(--ink-soft); }
+  .officepick button.on{ border-color:var(--navy); background:#E6ECF2; color:var(--navy); font-weight:600; }
+
+  .agreetoggle{ display:flex; gap:10px; align-items:flex-start; background:#fff;
+    border:1.5px solid var(--line); border-radius:7px; padding:12px 14px; margin-bottom:18px; cursor:pointer; }
+  .agreetoggle input{ margin-top:2px; accent-color:var(--navy); cursor:pointer; }
+  .agreetoggle .t{ font-size:13.5px; font-weight:600; }
+  .agreetoggle .d{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; margin-top:2px; }
+
+  .vergrid{ display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+  .vergrid.single{ grid-template-columns:1fr; }
+  .verbox{ background:#fff; border:1.5px solid var(--line); border-radius:8px; padding:14px 15px; }
+  .verbox.global{ border-top:3px solid var(--teal); }
+  .verbox.local{ border-top:3px solid var(--amber); }
+  .verbox h6{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.7px;
+    margin-bottom:4px; }
+  .verbox.global h6{ color:var(--teal); }
+  .verbox.local h6{ color:var(--amber); }
+  .verbox .vdesc{ font-size:11.5px; color:var(--ink-faint); line-height:1.45; margin-bottom:12px; }
+  .subrow{ display:flex; gap:7px; align-items:flex-start; margin-bottom:8px; }
+  .subrow .sref{ width:38px; flex-shrink:0; text-align:center; font-family:var(--mono); font-size:12px;
+    border:1.5px solid var(--line); border-radius:5px; padding:8px 2px; }
+  .subrow textarea{ flex:1; min-height:56px; resize:vertical; font-size:13px; line-height:1.45;
+    border:1.5px solid var(--line); border-radius:5px; padding:8px 9px; }
+  .subrow .del{ border:none; background:transparent; color:var(--ink-faint); cursor:pointer;
+    font-size:13px; padding:6px 4px; border-radius:4px; flex-shrink:0; }
+  .subrow .del:hover{ color:var(--red); background:var(--red-bg); }
+  .verbox .addsub{ width:100%; border:1.5px dashed var(--line); background:transparent;
+    color:var(--ink-soft); border-radius:6px; padding:9px; cursor:pointer; font-size:12.5px; }
+  .verbox .addsub:hover{ border-color:var(--navy); color:var(--navy); }
+  .verbox .noneyet{ font-size:12.5px; color:var(--ink-faint); font-style:italic; margin-bottom:9px; }
+
+  .validate{ background:var(--amber-bg); border:1px solid #EBD6B4; border-radius:7px;
+    padding:12px 14px; margin-bottom:18px; font-size:13px; color:#7A4C0E; line-height:1.5; }
+  .validate ul{ margin:7px 0 0 17px; }
+  .validate li{ margin-bottom:3px; }
+
+  /* ---------- RUNNER ---------- */
+  .step-meta{ display:flex; align-items:baseline; gap:13px; margin-bottom:6px; flex-wrap:wrap; }
+  .step-counter{ font-family:var(--mono); font-size:11px; letter-spacing:1px; text-transform:uppercase;
+    color:var(--ink-faint); }
+  .office-tag{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.6px;
+    padding:3px 9px; border-radius:10px; color:#fff; }
+  .office-tag.back{ background:#12405B; }
+  .office-tag.front{ background:#2A9D8F; }
+  .step-title{ font-family:var(--mono); font-weight:700; font-size:clamp(21px,3.2vw,29px);
+    line-height:1.2; letter-spacing:-0.5px; margin-bottom:23px; }
+  .step-title .num{ color:var(--ink-faint); margin-right:10px; }
+
+  .versions{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:25px; }
+  .vcard{ background:var(--card); border:1.5px solid var(--line); border-radius:8px; padding:16px 18px; }
+  .vcard .vlabel{ font-family:var(--mono); font-size:11px; font-weight:700; width:24px; height:24px;
+    border-radius:5px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center;
+    margin-bottom:12px; }
+  .vcard ul{ list-style:none; }
+  .vcard li{ font-size:13.5px; line-height:1.55; padding-left:20px; position:relative; margin-bottom:9px; }
+  .vcard li:last-child{ margin-bottom:0; }
+  .vcard li::before{ content:attr(data-ref); position:absolute; left:0; top:1px;
+    font-family:var(--mono); font-size:10.5px; font-weight:600; color:var(--ink-faint); }
+  .vcard .empty-note{ font-size:13.5px; color:var(--ink-soft); font-style:italic; line-height:1.55; }
+
+  .doc-card{ background:var(--card); border:1px solid var(--line); border-radius:8px;
+    padding:18px 20px; margin-bottom:25px; }
+  .doc-card ul{ list-style:none; }
+  .doc-card li{ font-size:14.5px; line-height:1.6; padding-left:22px; position:relative; margin-bottom:10px; }
+  .doc-card li:last-child{ margin-bottom:0; }
+  .doc-card li::before{ content:attr(data-ref); position:absolute; left:0; top:1px;
+    font-family:var(--mono); font-size:11px; font-weight:600; color:var(--teal); }
+  .agree-note{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px;
+    color:var(--teal); margin-bottom:8px; }
+
+  .answers{ display:grid; gap:10px; margin-bottom:8px; }
+  .ans{ display:flex; align-items:center; gap:14px; background:var(--card);
+    border:1.5px solid var(--line); border-radius:8px; padding:15px 18px; cursor:pointer;
+    text-align:left; width:100%; transition:border-color .12s, background .12s; }
+  .ans:hover{ border-color:var(--ink-faint); }
+  .ans:focus-visible{ outline:2px solid var(--navy); outline-offset:2px; }
+  .ans .key{ font-family:var(--mono); font-size:11px; font-weight:700; width:22px; height:22px;
+    border-radius:4px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center; flex-shrink:0; }
+  .ans .txt{flex:1;}
+  .ans .txt strong{ display:block; font-size:15px; font-weight:600; margin-bottom:2px; }
+  .ans .txt span{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; }
+  .ans.sel{ border-color:var(--navy); background:#E6ECF2; }
+  .ans.sel .key{ background:var(--navy); color:#fff; }
+
+  /* mix builder */
+  .mixpick{ padding-top:16px; }
+  .mixpick-lead{ font-size:13px; color:var(--ink-soft); line-height:1.5; margin-bottom:14px; }
+  .mixpick-lead b{ color:var(--ink); font-weight:600; }
+  .mixerr{ margin-top:12px; font-size:12.5px; color:var(--red); background:var(--red-bg);
+    border:1px solid #E4C4BF; border-radius:6px; padding:8px 11px; }
+  .dnd{ display:grid; grid-template-columns:1fr 1.15fr; gap:14px; align-items:start; }
+  .pool-wrap{ display:grid; gap:10px; }
+  .pool,.seq{ background:var(--card); border:1.5px solid var(--line); border-radius:8px; padding:13px 14px; }
+  .pool h6,.seq h6{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.7px;
+    color:var(--ink-soft); margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .pool .plabel{ font-family:var(--mono); font-size:11px; font-weight:700; width:21px; height:21px;
+    border-radius:5px; background:var(--bg); color:var(--ink-soft); display:grid; place-items:center; }
+  .seq{ border-color:var(--navy); min-height:180px; }
+  .seq.drag-over{ background:#EDF2F7; }
+  .seq h6{ color:var(--navy); }
+  .chip{ display:flex; gap:9px; align-items:flex-start; background:var(--bg); border:1px solid var(--line);
+    border-radius:6px; padding:9px 10px; margin-bottom:6px; cursor:grab; font-size:12.5px; line-height:1.45; }
+  .chip:last-child{margin-bottom:0;}
+  .chip:hover{ border-color:var(--ink-faint); }
+  .chip.dragging{ opacity:0.4; }
+  .chip .grip{ font-family:var(--mono); color:var(--ink-faint); font-size:12px; margin-top:2px;
+    flex-shrink:0; letter-spacing:-1px; }
+  .chip .cref{ font-family:var(--mono); font-size:10px; font-weight:700; padding:2px 5px; border-radius:3px;
+    flex-shrink:0; margin-top:1px; background:#DCE4E8; color:var(--ink-soft); }
+  .chip .ctext{flex:1;}
+  .chip .drop-x,.chip .add-plus{ border:none; background:transparent; color:var(--ink-faint);
+    cursor:pointer; font-size:13px; padding:2px 4px; border-radius:3px; flex-shrink:0; }
+  .chip .drop-x:hover{ color:var(--red); background:var(--red-bg); }
+  .chip .add-plus:hover{ color:var(--navy); background:#E6ECF2; }
+  .chip.placed{ opacity:0.32; cursor:default; }
+  .chip.placed .add-plus{ visibility:hidden; }
+  .seq .chip{ background:#fff; border-color:#C3D2DC; }
+  .seq .chip .cref{ background:#E6ECF2; color:var(--navy); }
+  .seq .chip .ord{ font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--navy);
+    background:#E6ECF2; width:19px; height:19px; border-radius:50%; display:grid; place-items:center;
+    flex-shrink:0; margin-top:1px; }
+  .seq .chip.custom{ border-color:var(--violet); background:#FAF8FE; }
+  .seq .chip.custom .cref,.seq .chip.custom .ord{ background:var(--violet-bg); color:var(--violet); }
+  .seq-empty{ font-size:12.5px; color:var(--ink-faint); font-style:italic; border:1.5px dashed var(--line);
+    border-radius:6px; padding:22px 14px; text-align:center; }
+  .pool .none{ font-size:12.5px; color:var(--ink-faint); font-style:italic; }
+  .mixcount{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); margin-top:10px; text-align:right; }
+  .drop-line{ height:2px; background:var(--navy); border-radius:2px; margin:3px 0; }
+  .addcustom{ margin-top:10px; padding-top:12px; border-top:1px dashed var(--line); }
+  .addcustom label{ display:block; font-family:var(--mono); font-size:10px; text-transform:uppercase;
+    letter-spacing:0.7px; color:var(--violet); margin-bottom:8px; }
+  .addcustom .r{ display:flex; gap:7px; }
+  .addcustom input{ flex:1; font-size:13px; border:1.5px solid var(--line); border-radius:6px;
+    padding:9px 11px; min-width:0; }
+  .addcustom input:focus{ outline:2px solid var(--violet); border-color:var(--violet); }
+  .addcustom button{ font-family:var(--mono); font-size:11px; background:var(--violet); color:#fff;
+    border:none; padding:9px 15px; border-radius:6px; cursor:pointer; white-space:nowrap; }
+  .addcustom .hintline{ font-size:11.5px; color:var(--ink-faint); margin-top:7px; }
+
+  .followup{ padding-top:14px; }
+  .followup label{ display:block; font-size:13px; color:var(--ink-soft); margin-bottom:7px; }
+  .followup textarea{ width:100%; min-height:66px; resize:vertical; font-size:14px; line-height:1.5;
+    border:1.5px solid var(--line); border-radius:7px; padding:11px 12px; }
+  .followup textarea:focus{ outline:2px solid var(--navy); border-color:var(--navy); }
+
+  .nav{ display:flex; gap:10px; align-items:center; margin-top:25px; padding-top:20px;
+    border-top:1px solid var(--line-soft); }
+
+  /* summary */
+  .tally{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:20px 0 24px; }
+  .tally div{ background:var(--card); padding:14px 16px; }
+  .tally .n{ font-family:var(--mono); font-weight:700; font-size:22px; }
+  .tally .l{ font-size:10.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.5px;
+    margin-top:4px; line-height:1.35; }
+  .sum-row{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+    margin-bottom:9px; display:flex; gap:12px; align-items:flex-start; }
+  .sum-row .badge{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.4px; padding:5px 9px; border-radius:4px; white-space:nowrap; max-width:118px;
+    text-align:center; line-height:1.3; }
+  .badge.aligned{ background:var(--teal-bg); color:var(--teal); }
+  .badge.risk{ background:var(--red-bg); color:var(--red); }
+  .badge.stale{ background:var(--amber-bg); color:var(--amber); }
+  .badge.emergent{ background:var(--violet-bg); color:var(--violet); }
+  .badge.none{ background:#EEF1F2; color:var(--ink-faint); }
+  .badge.sequence{ background:var(--sequence-bg); color:var(--sequence); }
+  .sum-row .body{flex:1;}
+  .sum-row .name{ font-weight:600; font-size:14px; margin-bottom:3px; }
+  .sum-row .name .id{ font-family:var(--mono); color:var(--ink-faint); margin-right:7px; font-size:12.5px; }
+  .sum-row .note{ font-size:13px; color:var(--ink-soft); line-height:1.5; }
+  .sum-row .note em{ color:var(--ink-faint); }
+  .sum-row .action{ font-size:12.5px; margin-top:5px; line-height:1.45; padding-left:11px;
+    border-left:2px solid var(--line); }
+
+  /* ---------- IMPORT REFERENCE ---------- */
+  .colref{background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:8px}
+  .colref table{width:100%;border-collapse:collapse}
+  .colref th{background:#F5F8F9;border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;
+    font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-soft)}
+  .colref td{padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:12.5px;vertical-align:top}
+  .colref tr:last-child td{border-bottom:none}
+  .colref td.cn{font-family:var(--mono);font-size:11.5px;color:var(--navy);font-weight:600;white-space:nowrap}
+  .colref td.rq{white-space:nowrap;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.4px}
+  .colref .req{color:var(--red)} .colref .opt{color:var(--ink-faint)}
+  .colref td.dsc{color:var(--ink-soft);line-height:1.45}
+
+  .exwrap{background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .exscroll{overflow-x:auto}
+  .extab{border-collapse:collapse;font-family:var(--mono);font-size:11px;white-space:nowrap;min-width:100%}
+  .extab th{background:#F5F8F9;border-bottom:1px solid var(--line);border-right:1px solid var(--line-soft);
+    padding:8px 10px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-soft)}
+  .extab td{padding:7px 10px;border-bottom:1px solid var(--line-soft);border-right:1px solid var(--line-soft);
+    color:var(--ink);max-width:290px;overflow:hidden;text-overflow:ellipsis}
+  .extab tr:last-child td{border-bottom:none}
+  .extab td.blank{background:#FAFCFC}
+  .extab td.hl{background:#FBF0DE;color:#7A4C0E;font-weight:600}
+  .extab tbody tr:hover td{background:#F7FAFA}
+  .extab td[contenteditable]:hover{ background:#F2F7FA; }
+  .extab td[contenteditable]:focus{ outline:2px solid var(--navy); outline-offset:-2px; background:#FBFDFF;
+    max-width:520px; white-space:normal; overflow-wrap:break-word; }
+  .extab td:nth-child(11){ max-width:420px; }   /* sub_text — the long one */
+  .extab td:has(select.cellpick){ padding:4px 6px; }
+  .extab select.cellpick{ width:100%; border:none; background:transparent; font:inherit; color:inherit; cursor:pointer; }
+  .extab select.cellpick:focus{ outline:2px solid var(--navy); outline-offset:-2px; background:#FBFDFF; }
+  .stepcard{ cursor:pointer; transition:border-color .12s; }
+  .stepcard:hover{ border-color:var(--navy); }
+  .stepcard .chev{ float:right; font-family:var(--mono); font-weight:700; color:var(--ink-faint); }
+  .subgrid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:14px 0 4px; }
+  .subcol{ background:#F7FAFA; border:1px solid var(--line-soft); border-radius:8px; padding:10px 12px; }
+  .subhead{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.6px;
+    color:var(--ink-soft); margin-bottom:7px; }
+  .sublist{ list-style:none; }
+  .sublist li{ font-size:12.5px; line-height:1.5; color:var(--ink); padding:3px 0;
+    border-bottom:1px dashed var(--line-soft); }
+  .sublist li:last-child{ border-bottom:none; }
+  .sublist b{ font-family:var(--mono); color:var(--navy); margin-right:5px; }
+  .subempty{ font-size:12px; color:var(--ink-faint); font-style:italic; }
+  .subnote{ grid-column:1/-1; font-size:12px; color:var(--ink-soft); background:var(--amber-bg);
+    border-radius:6px; padding:8px 10px; }
+  @media (max-width:700px){ .subgrid{ grid-template-columns:1fr; } }
+  .exnote{padding:12px 15px;background:#F5F8F9;border-top:1px solid var(--line);font-size:12.5px;
+    color:var(--ink-soft);line-height:1.55}
+  .exnote b{color:var(--ink)}
+  .exnote ul{margin:7px 0 0 17px} .exnote li{margin-bottom:4px}
+
+  /* ---------- MODAL ---------- */
+  .modal-back{
+    position:fixed; inset:0; background:rgba(11,37,69,0.5);
+    display:none; align-items:center; justify-content:center; padding:22px; z-index:100;
+    backdrop-filter:blur(2px);
+  }
+  .modal-back.show{ display:flex; }
+  .modal{
+    background:var(--card); border-radius:11px; width:100%; max-width:440px;
+    padding:24px 26px; box-shadow:0 18px 48px rgba(11,37,69,0.28);
+  }
+  .modal h3{ font-family:var(--mono); font-size:17px; font-weight:700; margin-bottom:8px; letter-spacing:-0.2px; }
+  .modal p.mbody{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; margin-bottom:17px; white-space:pre-line; }
+  .modal .mfield{ margin-bottom:17px; }
+  .modal .mfield label{ display:block; font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:0.7px; color:var(--ink-soft); margin-bottom:6px; }
+  .modal .mfield input{ width:100%; border:1.5px solid var(--line); border-radius:6px;
+    padding:11px 12px; font-size:14px; color:var(--ink); }
+  .modal .mfield input:focus{ outline:2px solid var(--navy); outline-offset:1px; border-color:var(--navy); }
+  .modal .merr{ font-size:12px; color:var(--red); margin-top:6px; min-height:15px; }
+  .modal .mactions{ display:flex; gap:9px; justify-content:flex-end; }
+
+  .regionpick{ display:flex; gap:7px; flex-wrap:wrap; }
+  .regionpick button{
+    border:1.5px solid var(--line); background:#fff; border-radius:6px;
+    padding:9px 15px; cursor:pointer; font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+  }
+  .regionpick button:hover{ border-color:var(--ink-faint); }
+  .regionpick button.on{ border-color:var(--navy); background:#E6ECF2; color:var(--navy); font-weight:600; }
+  .region-badge{
+    font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:0.5px;
+    background:#1F4E79; color:#CFE3EF; padding:4px 9px; border-radius:4px;
+  }
+
+  /* ---------- ROLE GATE ---------- */
+  .gate{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px; }
+  .gatecard{
+    background:var(--card); border:1.5px solid var(--line); border-radius:11px;
+    padding:26px 24px; cursor:pointer; text-align:left;
+    transition:border-color .14s, transform .08s, box-shadow .14s;
+  }
+  .gatecard:hover{ border-color:var(--navy); transform:translateY(-2px);
+    box-shadow:0 8px 22px rgba(11,37,69,0.09); }
+  .gatecard .gi{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.7px;
+    text-transform:uppercase; padding:5px 10px; border-radius:5px; display:inline-block; margin-bottom:14px;
+  }
+  .gatecard.user .gi{ background:var(--teal-bg); color:var(--teal); }
+  .gatecard.admin .gi{ background:#E6ECF2; color:var(--navy); }
+  .gatecard h3{ font-family:var(--mono); font-size:19px; font-weight:700; margin-bottom:8px;
+    letter-spacing:-0.3px; }
+  .gatecard p{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; margin-bottom:14px; }
+  .gatecard ul{ list-style:none; }
+  .gatecard li{ font-size:12.5px; color:var(--ink-faint); line-height:1.5; padding-left:16px;
+    position:relative; margin-bottom:5px; }
+  .gatecard li::before{ content:"—"; position:absolute; left:0; }
+  .gatenote{ font-size:12px; color:var(--ink-faint); line-height:1.5; margin-top:18px;
+    padding-top:14px; border-top:1px solid var(--line); max-width:600px; }
+
+  /* ---------- ANALYSIS (cross-region dashboard) ---------- */
+  .an .sect{ font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.8px;
+    color:var(--ink-soft); margin:32px 0 12px; }
+  .an .sect .h{ display:block; font-family:var(--sans); text-transform:none; letter-spacing:0;
+    font-size:12.5px; color:var(--ink-faint); margin-top:4px; font-weight:400; max-width:640px; }
+  .an .head{ display:grid; grid-template-columns:auto 1fr; gap:26px; background:var(--card);
+    border:1px solid var(--line); border-radius:11px; padding:22px 24px; align-items:center; }
+  .an .score{ text-align:center; min-width:120px; }
+  .an .score .n{ font-family:var(--mono); font-weight:700; font-size:44px; line-height:1; letter-spacing:-2px; }
+  .an .score .l{ font-size:10.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.6px; margin-top:7px; }
+  .an .bars{ display:grid; gap:7px; }
+  .an .bar{ display:grid; grid-template-columns:172px 1fr 34px; gap:11px; align-items:center; font-size:12.5px; }
+  .an .bar .bl{ color:var(--ink-soft); font-size:12px; }
+  .an .bar .track{ height:9px; background:var(--line-soft); border-radius:5px; overflow:hidden; }
+  .an .bar .fill{ display:block; height:100%; border-radius:5px; }
+  .an .bar .bn{ font-family:var(--mono); font-size:11.5px; color:var(--ink-soft); text-align:right; }
+  .an .mx{ background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+  .an .mx table{ width:100%; border-collapse:collapse; }
+  .an .mx th,.an .mx td{ text-align:left; font-size:13px; }
+  .an .mx thead th{ background:#F5F8F9; border-bottom:1px solid var(--line); padding:11px 12px;
+    font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px; color:var(--ink-soft); }
+  .an .mx thead th.rg{ text-align:center; width:74px; }
+  .an .mx thead th.dg{ width:190px; }
+  .an .mx tbody tr{ border-bottom:1px solid var(--line-soft); cursor:pointer; }
+  .an .mx tbody tr:last-child{ border-bottom:none; }
+  .an .mx tbody tr:hover{ background:#F7FAFA; }
+  .an .mx tbody tr.sel{ background:#E9F0F4; }
+  .an .mx td{ padding:9px 12px; vertical-align:middle; }
+  .an .mx td.stepc .id{ font-family:var(--mono); font-size:11.5px; color:var(--ink-faint); margin-right:7px; }
+  .an .mx td.stepc .nm{ font-weight:600; font-size:13px; }
+  .an .mx td.stepc .own{ font-family:var(--mono); font-size:10px; color:var(--ink-faint); margin-top:2px; display:block; }
+  .an .mx td.cell{ text-align:center; padding:9px 6px; }
+  .an .dot{ width:28px; height:28px; border-radius:6px; display:inline-grid; place-items:center;
+    font-family:var(--mono); font-size:14px; font-weight:700; cursor:help; }
+  .an .dot.aligned{ background:var(--aligned-bg); color:var(--aligned); }
+  .an .dot.source{ background:var(--source-bg); color:var(--source); }
+  .an .dot.coverage{ background:var(--coverage-bg); color:var(--coverage); }
+  .an .dot.sequence{ background:var(--sequence-bg); color:var(--sequence); }
+  .an .dot.emergent{ background:var(--emergent-bg); color:var(--emergent); }
+  .an .dot.none{ background:var(--none-bg); color:var(--none); }
+  .an .diag{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.4px; padding:5px 9px; border-radius:4px; display:inline-block; line-height:1.3; }
+  .an .diag.conformant{ background:var(--aligned-bg); color:var(--aligned); }
+  .an .diag.sop_problem{ background:var(--coverage-bg); color:var(--coverage); }
+  .an .diag.regional_outlier{ background:var(--source-bg); color:var(--source); }
+  .an .diag.fragmented{ background:var(--emergent-bg); color:var(--emergent); }
+  .an .diag.no_data{ background:var(--none-bg); color:var(--ink-soft); }
+  .an .keypanel{ display:grid; grid-template-columns:repeat(auto-fit,minmax(232px,1fr)); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:9px; overflow:hidden; margin-top:14px; }
+  .an .keyitem{ background:var(--card); padding:12px 14px; display:flex; gap:11px; align-items:flex-start; }
+  .an .keyitem .lk{ width:26px; height:26px; border-radius:6px; display:grid; place-items:center;
+    font-family:var(--mono); font-size:13px; font-weight:700; flex-shrink:0; }
+  .an .keyitem .ktxt{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .an .keyitem .ktxt b{ font-size:12.5px; font-weight:600; color:var(--ink); line-height:1.3; }
+  .an .keyitem .ktxt em{ font-size:11.5px; font-style:normal; color:var(--ink-faint); line-height:1.4; }
+  .an .drill{ background:var(--card); border:1px solid var(--navy); border-radius:11px; padding:22px 24px; margin-top:14px; }
+  .an .drill h3{ font-family:var(--mono); font-size:16px; font-weight:700; margin-bottom:3px; }
+  .an .drill h3 .id{ color:var(--ink-faint); margin-right:8px; }
+  .an .drill .dsub{ font-size:12.5px; color:var(--ink-soft); margin-bottom:17px; }
+  .an .verdictbox{ border-radius:8px; padding:13px 15px; margin-bottom:18px; font-size:13px; line-height:1.55; }
+  .an .verdictbox .vt{ font-family:var(--mono); font-size:10.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.6px; margin-bottom:5px; }
+  .an .verdictbox.conformant{ background:var(--aligned-bg); color:#134F45; }
+  .an .verdictbox.conformant .vt{ color:var(--aligned); }
+  .an .verdictbox.sop_problem{ background:var(--coverage-bg); color:#7A2A20; }
+  .an .verdictbox.sop_problem .vt{ color:var(--coverage); }
+  .an .verdictbox.regional_outlier{ background:var(--source-bg); color:#7A4C0E; }
+  .an .verdictbox.regional_outlier .vt{ color:var(--source); }
+  .an .verdictbox.fragmented{ background:var(--emergent-bg); color:#3D3160; }
+  .an .verdictbox.fragmented .vt{ color:var(--emergent); }
+  .an .verdictbox.no_data{ background:var(--none-bg); color:var(--ink-soft); }
+  .an .verdictbox.no_data .vt{ color:var(--ink-soft); }
+  .an .rgrid{ display:grid; gap:9px; }
+  .an .rrow{ border:1px solid var(--line); border-radius:8px; padding:12px 14px; display:grid;
+    grid-template-columns:52px 168px 1fr; gap:13px; align-items:start; }
+  .an .rrow .rcode{ font-family:var(--mono); font-weight:700; font-size:13px; color:var(--navy); }
+  .an .rrow .rtype{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.4px; padding:4px 8px; border-radius:4px; text-align:center; line-height:1.3; }
+  .an .rrow .rdet{ font-size:12.5px; line-height:1.5; color:var(--ink-soft); }
+  .an .rrow .rdet b{ color:var(--ink); font-weight:600; }
+  .an .rrow .rdet .q{ display:block; margin-top:5px; padding-left:10px; border-left:2px solid var(--line); font-style:italic; }
+  .an .seqbox{ margin-top:8px; border:1px solid var(--line); border-left:3px solid var(--emergent);
+    border-radius:6px; padding:8px 10px; background:#FDFCFE; }
+  .an .seqhead{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px;
+    color:var(--ink-soft); margin-bottom:6px; }
+  .an .seqhead .seq-extra-txt{ color:var(--emergent); }
+  .an .seqlist{ list-style:none; }
+  .an .seq-item{ display:grid; grid-template-columns:20px 1fr auto; gap:7px; font-size:12px;
+    line-height:1.45; padding:3px 0; border-bottom:1px dashed var(--line-soft); }
+  .an .seq-item:last-child{ border-bottom:none; }
+  .an .seq-item .sq{ font-family:var(--mono); color:var(--ink-faint); }
+  .an .seq-item .seq-src{ font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+  .an .seq-item.seq-extra{ background:var(--emergent-bg); border-radius:4px; padding:4px 6px;
+    margin:2px 0; border-bottom:none; }
+  .an .seq-item.seq-extra .st{ font-weight:600; color:var(--emergent); }
+  .an .seq-item.seq-extra .seq-src{ color:var(--emergent); font-weight:700; text-transform:uppercase; }
+  .an .cov{ background:var(--card); border:1px solid var(--line); border-radius:11px; padding:20px 22px; }
+  .an .covrow{ display:grid; grid-template-columns:1fr 128px 62px; gap:13px; align-items:center;
+    padding:9px 0; border-bottom:1px solid var(--line-soft); font-size:12.5px; }
+  .an .covrow:last-child{ border-bottom:none; }
+  .an .covrow .ct b{ font-family:var(--mono); font-size:11px; color:var(--navy); margin-right:6px; }
+  .an .covrow .cb{ display:block; margin-top:3px; color:var(--ink-soft); font-size:12px; line-height:1.45; max-width:560px; }
+  .an .covrow .cr{ display:block; margin-top:3px; font-family:var(--mono); font-size:10px; color:var(--ink-faint); }
+  .an .covrow .track{ height:8px; background:var(--line-soft); border-radius:4px; overflow:hidden; }
+  .an .covrow .fill{ display:block; height:100%; border-radius:4px; background:var(--coverage); }
+  .an .covrow .cn{ font-family:var(--mono); font-size:11.5px; color:var(--ink-soft); text-align:right; line-height:1.35; }
+  .an .covrow .cn .cl{ display:block; font-size:8.5px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:0.5px; }
+  .an .emrow{ display:grid; grid-template-columns:52px 150px 1fr; gap:13px; align-items:start;
+    padding:9px 0; border-bottom:1px solid var(--line-soft); font-size:12.5px; }
+  .an .emrow:last-child{ border-bottom:none; }
+  .an .emrow .rc{ font-family:var(--mono); font-weight:700; font-size:11px; color:var(--navy); }
+  .an .emrow .rn{ font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+  .an .emrow .rt{ color:var(--ink-soft); line-height:1.5; }
+  .an .act{ display:grid; gap:10px; }
+  .an .actcard{ background:var(--card); border:1px solid var(--line); border-radius:9px; padding:15px 17px;
+    border-left:4px solid var(--line); }
+  .an .actcard.amend{ border-left-color:var(--coverage); }
+  .an .actcard.correct{ border-left-color:var(--source); }
+  .an .actcard.harmonise{ border-left-color:var(--emergent); }
+  .an .actcard .ah{ font-family:var(--mono); font-size:10.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.6px; margin-bottom:5px; }
+  .an .actcard.amend .ah{ color:var(--coverage); }
+  .an .actcard.correct .ah{ color:var(--source); }
+  .an .actcard.harmonise .ah{ color:var(--emergent); }
+  .an .actcard .ad{ font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin-bottom:9px; }
+  .an .actcard .al{ font-size:12.5px; line-height:1.7; }
+  .an .actcard .al b{ font-family:var(--mono); font-size:11.5px; color:var(--navy); }
+
+  /* ---------- SESSIONS (records management) ---------- */
+  .sess-table{ background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+  .sess-head,.sess-row{ display:grid; grid-template-columns:170px 1fr 64px 1fr 108px 74px 148px; gap:10px;
+    align-items:center; padding:10px 14px; font-size:12.5px; }
+  .sess-head{ background:#F5F8F9; font-family:var(--mono); font-size:10px; text-transform:uppercase;
+    letter-spacing:0.6px; color:var(--ink-soft); border-bottom:1px solid var(--line); }
+  .sess-row{ border-bottom:1px solid var(--line-soft); }
+  .sess-row:last-child{ border-bottom:none; }
+  .sess-row:hover{ background:#F7FAFA; }
+  .sess-row .s-date{ font-family:var(--mono); font-size:11px; color:var(--ink-soft); }
+  .sess-row .s-region{ font-family:var(--mono); font-weight:700; font-size:12px; color:var(--navy); }
+  .sess-row .s-acts{ display:flex; gap:6px; }
+  .schip{ font-family:var(--mono); font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.4px; padding:4px 8px; border-radius:4px; white-space:nowrap; }
+  .schip.in_progress{ background:var(--amber-bg); color:var(--amber); }
+  .schip.complete{ background:var(--teal-bg); color:var(--teal); }
+  .schip.abandoned{ background:var(--none-bg); color:var(--ink-soft); }
+
+  @media (max-width:900px){
+    .sess-head,.sess-row{ grid-template-columns:1fr 1fr; }
+    .sess-head{ display:none; }
+  }
+
+  @media (max-width:700px){
+    .vergrid, .versions, .dnd{ grid-template-columns:1fr; }
+    .stage{ padding:24px 16px 50px; }
+    .topbar,.progress-strip{ padding-left:16px; padding-right:16px; }
+    .an .head{ grid-template-columns:1fr; }
+    .an .rrow{ grid-template-columns:1fr; }
+    .an .mx thead th.dg{ display:none; }
+    .an .mx td.diagc{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand" onclick="nav({v:'home'})">Process Review Admin</div>
+  <div class="crumb" id="crumb"></div>
+  <div class="spacer"></div>
+  <div class="row" id="topActions"></div>
+</div>
+
+<div id="progressHost"></div>
+<div class="stage"><div class="sheet" id="sheet"></div></div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <h3 id="mTitle"></h3>
+    <p class="mbody" id="mBody"></p>
+    <div class="mfield" id="mFieldWrap">
+      <label id="mLabel"></label>
+      <input type="text" id="mInput" autocomplete="off">
+      <div class="merr" id="mErr"></div>
+    </div>
+    <div class="mactions">
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn primary" id="mOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="regionBack">
+  <div class="modal">
+    <h3>Before you start</h3>
+    <p class="mbody">Recorded against every answer so results can be compared across regions later. This can't be changed once the review starts.</p>
+    <div class="mfield">
+      <label>Region</label>
+      <div class="regionpick" id="regionPick"></div>
+      <div class="merr" id="rErr"></div>
+    </div>
+    <div class="mfield">
+      <label>Your name</label>
+      <input type="text" id="rName" placeholder="Who is completing this review" autocomplete="off">
+      <div class="merr" id="rNameErr"></div>
+    </div>
+    <div class="mactions">
+      <button class="btn" id="rCancel">Cancel</button>
+      <button class="btn primary" id="rOk">Start session</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<script>
+let regionResolve = null, regionSel = null;
+
+function askRegion(){
+  return new Promise(resolve=>{
+    regionResolve = resolve; regionSel = null;
+    document.getElementById('rErr').textContent = '';
+    document.getElementById('rNameErr').textContent = '';
+    document.getElementById('rName').value = '';
+    const host = document.getElementById('regionPick');
+    host.innerHTML = REGIONS.map(r=>`<button data-r="${r}">${r}</button>`).join('');
+    host.querySelectorAll('button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        regionSel = b.dataset.r;
+        host.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        document.getElementById('rErr').textContent = '';
+      });
+    });
+    document.getElementById('regionBack').classList.add('show');
+  });
+}
+function closeRegion(val){
+  document.getElementById('regionBack').classList.remove('show');
+  const r = regionResolve; regionResolve = null;
+  if(r) r(val);
+}
+document.getElementById('rCancel').addEventListener('click', ()=>closeRegion(null));
+document.getElementById('rOk').addEventListener('click', ()=>{
+  const nm = document.getElementById('rName').value.trim();
+  let bad = false;
+  if(!regionSel){ document.getElementById('rErr').textContent = 'Pick a region to continue.'; bad = true; }
+  if(!nm){ document.getElementById('rNameErr').textContent = 'Please enter your name.'; bad = true; }
+  if(bad) return;
+  closeRegion({ region: regionSel, name: nm });
+});
+document.getElementById('rName').addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('rOk').click(); }
+});
+
+/* ============================================================
+   MODALS — artifacts run sandboxed, where native prompt()/confirm()
+   are suppressed and silently return null. These replace them.
+   ============================================================ */
+let modalResolve = null;
+
+function closeModal(result){
+  document.getElementById('modalBack').classList.remove('show');
+  const r = modalResolve; modalResolve = null;
+  if(r) r(result);
+}
+
+function askText({title, body='', label='', value='', okText='Create', placeholder=''}){
+  return new Promise(resolve=>{
+    modalResolve = resolve;
+    document.getElementById('mTitle').textContent = title;
+    const b = document.getElementById('mBody');
+    b.textContent = body; b.style.display = body ? '' : 'none';
+    document.getElementById('mFieldWrap').style.display = '';
+    document.getElementById('mLabel').textContent = label;
+    document.getElementById('mErr').textContent = '';
+    const inp = document.getElementById('mInput');
+    inp.value = value; inp.placeholder = placeholder;
+    document.getElementById('mOk').textContent = okText;
+    document.getElementById('mOk').className = 'btn primary';
+    document.getElementById('modalBack').classList.add('show');
+    setTimeout(()=>{ inp.focus(); inp.select(); }, 40);
+  });
+}
+
+function askConfirm({title, body='', okText='Confirm', danger=false}){
+  return new Promise(resolve=>{
+    modalResolve = resolve;
+    document.getElementById('mTitle').textContent = title;
+    const b = document.getElementById('mBody');
+    b.textContent = body; b.style.display = body ? '' : 'none';
+    document.getElementById('mFieldWrap').style.display = 'none';
+    document.getElementById('mOk').textContent = okText;
+    document.getElementById('mOk').className = danger ? 'btn danger' : 'btn primary';
+    document.getElementById('modalBack').classList.add('show');
+    setTimeout(()=>document.getElementById('mOk').focus(), 40);
+  });
+}
+
+document.getElementById('mCancel').addEventListener('click', ()=>closeModal(null));
+document.getElementById('mOk').addEventListener('click', ()=>{
+  const wrap = document.getElementById('mFieldWrap');
+  if(wrap.style.display === 'none'){ closeModal(true); return; }
+  const v = document.getElementById('mInput').value.trim();
+  if(!v){ document.getElementById('mErr').textContent = 'Please enter a name.'; return; }
+  closeModal(v);
+});
+document.getElementById('mInput').addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('mOk').click(); }
+});
+document.getElementById('modalBack').addEventListener('mousedown', e=>{
+  if(e.target.id === 'modalBack') closeModal(null);
+});
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape' && modalResolve) closeModal(null);
+});
+
+/* ============================================================
+   ANSWER SETS + CLASSIFICATION
+   ============================================================ */
+const ANS_DIFFER = [
+  {val:"a",    key:"1", title:"A",                     sub:"What we do looks like version A."},
+  {val:"b",    key:"2", title:"B",                     sub:"What we do looks like version B."},
+  {val:"mix",  key:"3", title:"A mix of both",         sub:"Build the actual sequence from both versions."},
+  {val:"skip", key:"4", title:"We don't do this step", sub:"Skipped entirely, or handled by another team."}
+];
+const ANS_AGREE = [
+  {val:"same",   key:"1", title:"Yes — that's what we do", sub:"Practice matches what's written."},
+  {val:"partial",key:"2", title:"Partly — we do less",     sub:"Some of this doesn't happen in practice."},
+  {val:"extra",  key:"3", title:"We do more than this",    sub:"Extra work happens that isn't written down."},
+  {val:"skip",   key:"4", title:"We don't do this step",   sub:"Skipped entirely, or handled by another team."}
+];
+const FOLLOWUP = {
+  a:"Anything you do differently from version A? One line is fine.",
+  b:"Anything you do differently from version B? One line is fine.",
+  mix:"Anything else worth noting about how this runs? (Optional)",
+  skip:"In one line — why is it skipped, or who does it instead?",
+  same:"Anything worth noting? (Optional)",
+  partial:"In one line — which parts don't happen?",
+  extra:"In one line — what extra work happens here?"
+};
+const VERDICT_ACTION = {
+  aligned:"No action.",
+  risk:"Escalate to process owner — local doc conflicts with global.",
+  stale:"Update the local ops sheet to match global.",
+  emergent:"Assess: formalise this practice, or correct it back to SOP.",
+  sequence:"Review the documented order — the work happens, but in a different sequence."
+};
+const VLABEL = {aligned:"Aligned", risk:"Compliance risk", stale:"Local doc stale",
+                emergent:"New practice", sequence:"Different order", none:"No answer"};
+
+/* A step the reviewer never answered is missing data, not a finding.
+   Keeping it distinct from "we don't do this step" — which IS a finding —
+   stops absent responses being read as deviations. */
+const VERDICT_ACTION_NONE = "No answer recorded — follow up with the reviewer before drawing conclusions.";
+
+function isLocalOnly(step){ return (step.global||[]).length===0 && (step.local||[]).length>0; }
+
+function classify(step, val, picks, assign, responses){
+  if(!val) return null;
+  // global SOP assigns this step to the FRONT office: doing it is a role
+  // deviation — only "we don't do this step" conforms
+  if(step.office==='front'){
+    return val==='skip' ? 'aligned' : 'risk';
+  }
+  if(val==="skip") return isLocalOnly(step) ? "emergent" : "risk";
+  if(step.agree){
+    if(val==="same") return "aligned";
+    if(val==="partial") return "risk";
+    if(val==="extra") return "emergent";
+    return null;
+  }
+  const aIsLocal = ((assign||SESS.assign||{})[step.id])==='local';
+  const picked = val==="a" ? (aIsLocal?"local":"global")
+               : val==="b" ? (aIsLocal?"global":"local") : val;
+  // Picking a card that has no content means "we do none of this" — not that
+  // practice follows a document that says nothing. Treat it as a skip.
+  if((picked==="global" || picked==="local") && !(step[picked]||[]).length){
+    return isLocalOnly(step) ? "emergent" : "risk";
+  }
+  if(picked==="global") return "stale";
+  if(picked==="local")  return isLocalOnly(step) ? "emergent" : "risk";
+  if(picked==="mix"){
+    const r = resolvePicks(step, picks, assign, responses);
+    if(r){
+      const gTotal = (step.global||[]).length;
+      if(gTotal>0 && r.global.length===gTotal){
+        if(r.local.length || r.custom.length) return "emergent";
+        // same content in a different order is still a deviation
+        const pos = r.global.map(ref => (step.global||[]).findIndex(d=>d.ref===ref));
+        if(pos.every((p,i)=> i===0 || pos[i-1] <= p)) return "stale";
+        return "sequence";
+      }
+    }
+    return "risk";
+  }
+  return null;
+}
+
+/* ============================================================
+   APP STATE + ROUTER
+   ============================================================ */
+let DB = { index:[] };
+let PROC = null;                       // loaded process definition
+let SESS = { responses:{}, assign:{} };// loaded session for PROC
+let view = { v:'home', stepIdx:0, openStep:null };
+
+
+function esc(s){ const d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
+function uid(){ return crypto.randomUUID(); }   // process.id is a uuid PK in Postgres
+
+function aIsFor(step){
+  if(!SESS.assign[step.id]){
+    SESS.assign[step.id] = Math.random() < 0.5 ? 'local' : 'global';
+    saveSession();
+  }
+  return SESS.assign[step.id];
+}
+
+async function saveIndex(){ try{ await sSet('proc:index', DB.index); }catch(e){ saveFailed(e.message); } }
+async function saveProc(){
+  if(!PROC) return;
+  try{
+    PROC.updated = new Date().toISOString();
+    await sSet('proc:'+PROC.id, PROC);
+    const row = DB.index.find(r=>r.id===PROC.id);
+    if(row){ row.name = PROC.name; row.updated = PROC.updated; row.steps = PROC.steps.length; }
+    await saveIndex();
+    flagSaved();
+  }catch(e){ saveFailed(e.message); }
+}
+async function saveSession(){
+  if(!PROC) return;
+  try{ await sSet('sess:'+PROC.id, SESS); flagSaved(); }
+  catch(e){ saveFailed(e.message); }
+}
+
+async function openProc(id){
+  PROC = await sGet('proc:'+id, null);
+  SESS = await sGet('sess:'+id, {responses:{}, assign:{}});
+  if(!SESS.responses) SESS.responses = {};
+  if(!SESS.assign) SESS.assign = {};
+}
+
+function nav(next){
+  view = Object.assign({v:'home', stepIdx:0, openStep:null}, next);
+  render();
+  window.scrollTo(0,0);
+}
+
+let saveTimer;
+function flagSaved(){
+  const h = document.getElementById('saveHint');
+  if(!h) return;
+  h.textContent = 'Saved'; h.style.color = '';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{ if(h) h.textContent=''; }, 1200);
+}
+function saveFailed(msg){
+  const h = document.getElementById('saveHint');
+  if(!h) return;
+  h.textContent = 'Not saved: ' + (msg||'see console'); h.style.color = '#FF9C8A';
+  console.error('save failed:', msg);
+}
+
+/* ============================================================
+   CSV IMPORT
+   Column set mirrors the Supabase import_staging table exactly,
+   so the same file loads into either backend without reshaping.
+   ============================================================ */
+const IMPORT_COLS = ['process_name','domain','global_label','local_label','step_no',
+  'step_name','office','same_in_both','version','sub_ref','sub_text','step_note'];
+
+/* Columns people most often fill in wrong — highlighted in the example table. */
+const HL_COLS = ['same_in_both','version','sub_ref'];
+
+const COL_HELP = [
+  ['process_name', true,  'Name of the process. Only needed on the first row — every row is treated as the same process.'],
+  ['domain',       false, 'Business area shown under the process name, e.g. “Ocean Freight · Origin Operations”.'],
+  ['global_label', false, 'What to call the authoritative document, e.g. “Global SOP v86.0”. Defaults to “Global SOP”.'],
+  ['local_label',  false, 'What to call the local document, e.g. “Local Ops Sheet”.'],
+  ['step_no',      true,  'The step label as written in the SOP — “1.0”, “7.0”, or text like “Collect Approval”. Rows sharing a step_no are grouped into one step.'],
+  ['step_name',    false, 'Title of the step. Needed once per step; repeat it or leave blank on later rows.'],
+  ['office',       false, '<code>back</code> or <code>front</code> — who the global SOP assigns the step to. Defaults to <code>back</code>.'],
+  ['same_in_both', false, '<code>TRUE</code> when both documents describe the step identically. The review then shows one card instead of an A/B comparison. Accepts TRUE / Y / YES / 1.'],
+  ['version',      true,  '<code>global</code> or <code>local</code> — which document this row\'s text comes from. Anything else is skipped with a warning.'],
+  ['sub_ref',      false, 'The sub-step letter — a, b, c. Auto-assigned if left blank.'],
+  ['sub_text',     true,  'The actual wording of the sub-step. Rows with no sub_text are ignored.'],
+  ['step_note',    false, 'A note for the reviewer, shown only in the results summary — never to participants.']
+];
+
+/* Drawn from the seeded Booking Order so the example matches a process
+   that's actually in the library and can be compared against. */
+const EXAMPLE_ROWS = [
+  ['Booking Order','Ocean Freight · Origin Operations','Global SOP v86.0','Local Ops Sheet','1.0','Receive Booking from Customer','back','FALSE','global','a','Receive the booking by email or web — written confirmation only.',''],
+  ['','','','','1.0','','','','global','b','Validate the booking to ensure no mandatory information is missing.',''],
+  ['','','','','1.0','','','','global','c','Validate prohibited and restricted ocean cargoes into CW1.',''],
+  ['','','','','1.0','','','','local','a','Validate that no mandatory information is missing from the booking.',''],
+  ['','','','','1.0','','','','local','b','Validate the commodity — check for potential DG or special handling.',''],
+  ['','','','','1.0','','','','local','c','If mandatory information is missing, contact the customer to get the data.',''],
+  ['','','','','2.0','Validate Customer Code in CW1','back','TRUE','global','a','Check the CW1 Org Code exists and screening status is CLR.',''],
+  ['','','','','2.0','','','TRUE','global','b','If the code does not exist, coordinate with GBS MDM to create it, then screen.',''],
+  ['','','','','4.0','Send Booking Acknowledgement','back','FALSE','local','a','Send a booking acknowledgement to the customer after receiving the SLI or email.',''],
+  ['','','','','7.0','Validate Sailing Schedules','back','FALSE','global','a','Use Published Sailing Schedules, customer SOP and overseas office input to select the best routing.','Local sheet has nothing for this step.'],
+  ['','','','','7.0','','','','global','b','Carrier checklist: SOP carrier list; Cargo Ready Date; valid rates; space allocation; cost per option.','']
+];
+
+/* Hand-rolled because Excel exports quote fields containing commas,
+   quotes and newlines — split(',') corrupts real SOP text. */
+function parseCSV(text){
+  text = text.replace(/^\uFEFF/, '');           // strip Excel BOM
+  const rows = []; let row = [], cell = '', q = false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i], nx = text[i+1];
+    if(q){
+      if(ch === '"' && nx === '"'){ cell += '"'; i++; }
+      else if(ch === '"'){ q = false; }
+      else cell += ch;
+    } else {
+      if(ch === '"') q = true;
+      else if(ch === ','){ row.push(cell); cell=''; }
+      else if(ch === '\r'){ /* skip */ }
+      else if(ch === '\n'){ row.push(cell); rows.push(row); row=[]; cell=''; }
+      else cell += ch;
+    }
+  }
+  if(cell.length || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+function csvToProcess(text){
+  const rows = parseCSV(text);
+  if(rows.length < 2) throw new Error('File appears to be empty — expected a header row plus at least one data row.');
+
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  const missing = ['process_name','step_no','version','sub_text'].filter(c => !head.includes(c));
+  if(missing.length) throw new Error('Missing required column(s): ' + missing.join(', '));
+
+  const col = n => head.indexOf(n);
+  const get = (r, n) => { const i = col(n); return i < 0 ? '' : (r[i]||'').trim(); };
+
+  const body = rows.slice(1);
+  const pname = body.map(r=>get(r,'process_name')).find(v=>v);
+  if(!pname) throw new Error('No process_name value found in any row.');
+
+  const proc = {
+    id: uid('proc'),
+    name: pname,
+    domain:      body.map(r=>get(r,'domain')).find(v=>v) || '',
+    globalLabel: body.map(r=>get(r,'global_label')).find(v=>v) || 'Global SOP',
+    localLabel:  body.map(r=>get(r,'local_label')).find(v=>v)  || 'Local Ops Sheet',
+    steps: [], updated: new Date().toISOString()
+  };
+
+  const order = [];               // preserves first-appearance order of steps
+  const byNo = {};
+  const warnings = [];
+
+  body.forEach((r, i) => {
+    const stepNo = get(r,'step_no');
+    if(!stepNo){ warnings.push(`Row ${i+2}: no step_no — skipped.`); return; }
+
+    if(!byNo[stepNo]){
+      byNo[stepNo] = { id:stepNo, name:'', office:'back', agree:false, local:[], global:[], note:'' };
+      order.push(stepNo);
+    }
+    const st = byNo[stepNo];
+    if(get(r,'step_name')) st.name = get(r,'step_name');
+    const off = get(r,'office').toLowerCase();
+    if(off === 'front' || off === 'back') st.office = off;
+    if(['true','y','yes','1'].includes(get(r,'same_in_both').toLowerCase())) st.agree = true;
+    if(get(r,'step_note')) st.note = get(r,'step_note');
+
+    const ver = get(r,'version').toLowerCase();
+    const txt = get(r,'sub_text');
+    if(!txt) return;                                  // header-ish or blank content row
+    if(ver !== 'global' && ver !== 'local'){
+      warnings.push(`Row ${i+2}: version "${get(r,'version')}" not recognised — expected global or local. Skipped.`);
+      return;
+    }
+    const ref = get(r,'sub_ref') || String.fromCharCode(97 + st[ver].length);
+    st[ver].push({ ref, text: txt });
+  });
+
+  proc.steps = order.map(n => byNo[n]);
+  proc.steps.forEach(s=>{
+    if(!s.name) warnings.push(`Step "${s.id}" has no step_name.`);
+    if(!s.global.length && !s.local.length) warnings.push(`Step "${s.id}" has no content in either version.`);
+  });
+  if(!proc.steps.length) throw new Error('No usable steps found.');
+  return { proc, warnings };
+}
+
+let pendingImport = null;
+let importGrid = null;   // editable sheet rows in the import view
+let importPreviewOpen = new Set();   // expanded step indices in the import preview
+
+function renderImport(host){
+  if(!importGrid) importGrid = EXAMPLE_ROWS.map(r=>[...r]);
+  const p = pendingImport;
+  const preview = p ? `
+    <div class="label" style="margin-top:24px">Preview<span class="hint">Check this looks right before importing.</span></div>
+    <div class="pcard" style="margin-bottom:12px">
+      <div class="pinfo">
+        <div class="pname">${esc(p.proc.name)}</div>
+        <div class="pmeta">${p.proc.steps.length} steps<span class="sep">·</span>${esc(p.proc.globalLabel)} vs ${esc(p.proc.localLabel)}${p.proc.domain?'<span class="sep">·</span>'+esc(p.proc.domain):''}</div>
+      </div>
+    </div>
+    ${p.warnings.length ? `<div class="validate"><b>${p.warnings.length} thing${p.warnings.length===1?'':'s'} to check:</b>
+      <ul>${p.warnings.slice(0,12).map(w=>`<li>${esc(w)}</li>`).join('')}
+      ${p.warnings.length>12?`<li>…and ${p.warnings.length-12} more.</li>`:''}</ul></div>` : ''}
+    <div class="row" style="margin:6px 0">
+      <button class="btn sm" onclick="expandAllImportSteps(true)">Expand all steps</button>
+      <button class="btn sm" onclick="expandAllImportSteps(false)">Collapse all</button>
+    </div>
+    <div class="steplist">
+      ${p.proc.steps.map((s,i)=>`<div class="pcard stepcard ${importPreviewOpen.has(i)?'open':''}" onclick="toggleImportStep(${i})">
+        <div class="pinfo">
+          <div class="pname" style="font-size:14px">${esc(s.id)} ${esc(s.name||'(unnamed)')}
+            <span class="chev">${importPreviewOpen.has(i)?'−':'+'}</span></div>
+          <div class="pmeta">${s.agree?'both versions agree':'G'+s.global.length+' / L'+s.local.length}<span class="sep">·</span>${s.office==='back'?'Back office':'Front office'}</div>
+        </div>
+        ${importPreviewOpen.has(i)?`
+          <div class="subgrid">
+            ${s.agree
+              ? `<div class="subcol"><div class="subhead">Both versions (identical)</div>${subListHTML(s.global)}</div>`
+              : `<div class="subcol"><div class="subhead">${esc(p.proc.globalLabel)}</div>${subListHTML(s.global)}</div>
+                 <div class="subcol"><div class="subhead">${esc(p.proc.localLabel)}</div>${subListHTML(s.local)}</div>`}
+            ${s.note?`<div class="subnote">${esc(s.note)}</div>`:''}
+          </div>`:''}
+      </div>`).join('')}
+    </div>
+    <div class="nav">
+      <button class="btn" onclick="pendingImport=null; render()">Clear</button>
+      <span class="spacer"></span>
+      <button class="btn primary" onclick="commitImport()">Import ${p.proc.steps.length} steps</button>
+    </div>` : '';
+
+  host.innerHTML = `
+    <h2 class="page">Import a process</h2>
+    <p class="lede">Upload a CSV, or paste the rows straight from Excel. <b>One row per sub-step</b> — the process and step details repeat down the rows. Columns match the database staging table, so the same file loads into Supabase unchanged.</p>
+
+    <div class="row" style="margin-bottom:22px">
+      <button class="btn" onclick="downloadTemplate()">Download blank template</button>
+      <button class="btn" onclick="loadExample()">Load this example into the box</button>
+      <label class="btn" style="cursor:pointer">
+        Choose CSV file…
+        <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
+      </label>
+      <span class="spacer"></span>
+      <button class="btn" onclick="nav({v:'home'})">Back to library</button>
+    </div>
+
+    <div class="sectlabel label">Process data sheet
+      <span class="hint">Edit cells directly, add rows, or paste from Excel/CSV. When it looks right, import straight from the sheet — no file needed. Highlighted cells are the ones people usually get wrong.</span></div>
+    <div class="exwrap">
+      <div class="row" style="gap:6px; margin-bottom:8px; flex-wrap:wrap">
+        <button class="btn sm" onclick="loadSheetExample()">Load example</button>
+        <button class="btn sm" onclick="addSheetRow()">+ Add row</button>
+        <button class="btn sm" onclick="addSheetRows(5)">+ 5 rows</button>
+        <button class="btn sm" onclick="toggleSheetPaste()">Paste CSV…</button>
+        <button class="btn sm" onclick="clearSheet()">Clear sheet</button>
+        <span class="spacer"></span>
+        <button class="btn sm primary" onclick="importFromSheet()">Import from sheet →</button>
+      </div>
+      <div id="sheetPasteWrap" style="display:none; margin-bottom:8px">
+        <textarea class="fld" id="sheetPaste" style="min-height:110px; font-family:var(--mono); font-size:12px" placeholder="Paste rows from Excel or a CSV — with or without the header row.&#10;process_name,domain,global_label,local_label,step_no,step_name,office,same_in_both,version,sub_ref,sub_text,step_note&#10;Booking Order,…"></textarea>
+        <div class="row" style="margin-top:6px">
+          <button class="btn sm primary" onclick="replaceSheetFromPaste()">Load into sheet</button>
+          <button class="btn sm" onclick="appendSheetFromPaste()">Append below</button>
+          <span class="merr" id="sheetPasteErr" style="color:var(--red); font-size:12px"></span>
+        </div>
+      </div>
+      <div class="exscroll">
+        <table class="extab">
+          <thead><tr>${IMPORT_COLS.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+          <tbody id="extabBody">${sheetRowsHTML()}</tbody>
+        </table>
+      </div>
+      <div class="exnote">
+        <b>Reading the example:</b>
+        <ul>
+          <li>Step <b>1.0</b> spans six rows — three for each version. The step repeats; only <code>version</code>, <code>sub_ref</code> and <code>sub_text</code> change.</li>
+          <li>Blank cells are fine. Once <code>process_name</code>, <code>domain</code> and the label columns appear on the first row, later rows can leave them empty.</li>
+          <li>Step <b>2.0</b> has <code>same_in_both = TRUE</code>, so only the global rows are needed — the local version is treated as identical.</li>
+          <li>Step <b>4.0</b> has <i>only</i> local rows and step <b>7.0</b> has <i>only</i> global rows. That's deliberate: a version saying nothing about a step is real data, not a mistake.</li>
+          <li>Row order sets the display order of both steps and sub-steps.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="sectlabel label" style="margin-top:26px">Columns
+      <span class="hint">Four are required; the rest can be left blank.</span></div>
+    <div class="colref">
+      <table>
+        <thead><tr><th>Column</th><th>Required</th><th>What it holds</th></tr></thead>
+        <tbody>${COL_HELP.map(([n,req,d])=>`<tr>
+          <td class="cn">${n}</td>
+          <td class="rq"><span class="${req?'req':'opt'}">${req?'Required':'Optional'}</span></td>
+          <td class="dsc">${d}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+
+    <div class="field">
+      <label>Or paste CSV rows here</label>
+      <textarea class="fld" id="csvText" style="min-height:150px; font-family:var(--mono); font-size:12px"
+        placeholder="process_name,domain,global_label,local_label,step_no,step_name,office,same_in_both,version,sub_ref,sub_text,step_note&#10;Booking Order,…"></textarea>
+    </div>
+    <div class="row"><button class="btn primary" onclick="parsePasted()">Parse rows</button>
+      <span class="merr" id="impErr" style="color:var(--red); font-size:12.5px"></span></div>
+
+    ${preview}`;
+
+  const f = document.getElementById('csvFile');
+  if(f) f.addEventListener('change', e=>{
+    const file = e.target.files[0]; if(!file) return;
+    const rd = new FileReader();
+    rd.onload = () => { document.getElementById('csvText').value = rd.result; parsePasted(); };
+    rd.readAsText(file);
+  });
+
+  const tb = document.getElementById('extabBody');
+  if(tb){
+    // typing in a cell
+    tb.addEventListener('input', e=>{
+      const td = e.target.closest('td[contenteditable]');
+      if(!td) return;
+      const ri=+td.dataset.r, ci=+td.dataset.c, v=td.textContent;
+      if(!importGrid[ri]) return;
+      importGrid[ri][ci] = v;
+      td.className = (v===''?'blank ':'') + (HL_COLS.includes(IMPORT_COLS[ci])?'hl':'');
+      td.title = v;
+    });
+    // dropdown cells
+    tb.addEventListener('change', e=>{
+      const sel = e.target.closest('select.cellpick');
+      if(!sel) return;
+      const ri=+sel.dataset.r, ci=+sel.dataset.c;
+      if(!importGrid[ri]) return;
+      importGrid[ri][ci] = sel.value;
+      sel.closest('td').className = (sel.value===''?'blank ':'') + (HL_COLS.includes(IMPORT_COLS[ci])?'hl':'');
+    });
+    // Excel-style paste into the grid: multi-row clipboard fills down/right from the cell
+    tb.addEventListener('paste', e=>{
+      const text = e.clipboardData.getData('text');
+      if(!text || (!text.includes('\n') && !text.includes('\t'))) return;
+      e.preventDefault();
+      const td = e.target.closest('td[contenteditable]');
+      if(!td) return;
+      const ri=+td.dataset.r, ci=+td.dataset.c;
+      const lines = text.replace(/\r/g,'').split('\n');
+      while(lines.length && lines[lines.length-1]==='') lines.pop();
+      lines.forEach((line,di)=>{
+        const cells = line.includes('\t') ? line.split('\t') : line.split(',');
+        cells.forEach((cv,dj)=>{
+          const r=ri+di, c=ci+dj;
+          if(!importGrid[r]) importGrid[r]=Array(IMPORT_COLS.length).fill('');
+          importGrid[r][c] = cv;
+        });
+      });
+      tb.innerHTML = sheetRowsHTML();
+    });
+  }
+}
+
+function loadExample(){
+  const q = v => /[",\n]/.test(v) ? '"'+String(v).replace(/"/g,'""')+'"' : v;
+  const csv = [IMPORT_COLS.join(',')]
+    .concat(EXAMPLE_ROWS.map(r=>r.map(q).join(','))).join('\n');
+  document.getElementById('csvText').value = csv;
+  parsePasted();
+}
+
+/* ---------- editable sheet ---------- */
+function sheetRowsHTML(){
+  return importGrid.map((r,ri)=>`<tr>${r.map((v,ci)=>{
+    const col = IMPORT_COLS[ci];
+    const cls = (v===''?'blank ':'') + (HL_COLS.includes(col)?'hl':'');
+    // constrained columns get dropdowns instead of free text
+    if(col==='office' || col==='version' || col==='same_in_both'){
+      const opts = col==='office' ? ['','back','front']
+                 : col==='version' ? ['','global','local']
+                 : ['','TRUE','FALSE'];
+      const norm = col==='same_in_both'
+        ? ({TRUE:'TRUE',FALSE:'FALSE',Y:'TRUE',YES:'TRUE',1:'TRUE',N:'FALSE',NO:'FALSE',0:'FALSE'})[String(v).toUpperCase()] || ''
+        : v;
+      return `<td class="${cls.trim()}"><select class="cellpick" data-r="${ri}" data-c="${ci}">${opts.map(o=>`<option value="${o}" ${o===norm?'selected':''}>${o||'—'}</option>`).join('')}</select></td>`;
+    }
+    return `<td class="${cls.trim()}" contenteditable="true" data-r="${ri}" data-c="${ci}" title="${esc(v)}">${v===''?'&nbsp;':esc(v)}</td>`;
+  }).join('')}</tr>`).join('');
+}
+function loadSheetExample(){ importGrid = EXAMPLE_ROWS.map(r=>[...r]); render(); }
+function clearSheet(){ importGrid = [Array(IMPORT_COLS.length).fill('')]; render(); }
+function addSheetRow(){ importGrid.push(Array(IMPORT_COLS.length).fill('')); render(); }
+function addSheetRows(n){ for(let i=0;i<n;i++) importGrid.push(Array(IMPORT_COLS.length).fill('')); render(); }
+function toggleSheetPaste(){
+  const w = document.getElementById('sheetPasteWrap');
+  if(w) w.style.display = w.style.display==='none' ? '' : 'none';
+}
+function sheetPasteRows(){
+  const raw = document.getElementById('sheetPaste').value;
+  let rows = parseCSV(raw);
+  if(rows.length<=1 && raw.includes('\t')){   // Excel copies are tab-separated
+    rows = raw.replace(/\r/g,'').split('\n').filter(l=>l.trim()!=='').map(l=>l.split('\t'));
+  }
+  if(rows.length && rows[0][0] && rows[0][0].trim().toLowerCase()==='process_name') rows = rows.slice(1);
+  return rows;
+}
+function replaceSheetFromPaste(){
+  const err = document.getElementById('sheetPasteErr');
+  try{
+    const rows = sheetPasteRows();
+    if(!rows.length) throw new Error('Nothing to load — paste some rows first.');
+    importGrid = rows.map(r=>{ const out=Array(IMPORT_COLS.length).fill(''); r.forEach((c,i)=>{ if(i<out.length) out[i]=String(c); }); return out; });
+    render(); err.textContent='';
+  }catch(e){ err.textContent = e.message; }
+}
+function appendSheetFromPaste(){
+  const err = document.getElementById('sheetPasteErr');
+  try{
+    const rows = sheetPasteRows();
+    if(!rows.length) throw new Error('Nothing to append.');
+    rows.forEach(r=>{ const out=Array(IMPORT_COLS.length).fill(''); r.forEach((c,i)=>{ if(i<out.length) out[i]=String(c); }); importGrid.push(out); });
+    render(); err.textContent='';
+  }catch(e){ err.textContent = e.message; }
+}
+function subListHTML(subs){
+  if(!subs || !subs.length) return '<p class="subempty">Nothing in this version.</p>';
+  return `<ul class="sublist">${subs.map(d=>`<li><b>${esc(d.ref||'·')}</b> ${esc(d.text)}</li>`).join('')}</ul>`;
+}
+function toggleImportStep(i){
+  if(importPreviewOpen.has(i)) importPreviewOpen.delete(i); else importPreviewOpen.add(i);
+  render();
+}
+function expandAllImportSteps(open){
+  importPreviewOpen = open && pendingImport
+    ? new Set(Array.from({length: pendingImport.proc.steps.length}, (_,i)=>i))
+    : new Set();
+  render();
+}
+
+function importFromSheet(){
+  const q = v => /[",\n]/.test(v) ? '"'+String(v).replace(/"/g,'""')+'"' : v;
+  try{
+    const csv = importGrid.map(r=>r.map(q).join(',')).join('\n');
+    pendingImport = csvToProcess(IMPORT_COLS.join(',') + '\n' + csv);
+    importPreviewOpen = new Set();
+    render();
+  }catch(e){
+    const el = document.getElementById('sheetPasteErr');
+    if(el) el.textContent = e.message; else saveFailed(e.message);
+  }
+}
+
+function parsePasted(){
+  const t = (document.getElementById('csvText').value||'').trim();
+  const err = document.getElementById('impErr');
+  err.textContent = '';
+  if(!t){ err.textContent = 'Nothing to parse yet.'; return; }
+  try{
+    pendingImport = csvToProcess(t);
+    importPreviewOpen = new Set();
+    render();
+  }catch(e){
+    pendingImport = null;
+    err.textContent = e.message;
+  }
+}
+
+async function commitImport(){
+  if(!pendingImport) return;
+  const p = pendingImport.proc;
+  await sSet('proc:'+p.id, p);
+  DB.index.push({id:p.id, name:p.name, domain:p.domain, steps:p.steps.length,
+                 updated:p.updated, status:'ready'});
+  await saveIndex();
+  pendingImport = null;
+  PROC = p; SESS = {responses:{}, assign:{}};
+  nav({v:'admin'});
+}
+
+function downloadTemplate(){
+  const q = v => `"${String(v).replace(/"/g,'""')}"`;
+  const ex = EXAMPLE_ROWS;
+  const csv = [IMPORT_COLS.join(',')].concat(ex.map(r=>r.map(q).join(','))).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\uFEFF'+csv], {type:'text/csv'}));
+  a.download = 'process-import-template.csv';
+  a.click();
+}
+
+/* ============================================================
+   RENDER — router
+   ============================================================ */
+function render(){
+  const crumb = document.getElementById('crumb');
+  const acts  = document.getElementById('topActions');
+  const prog  = document.getElementById('progressHost');
+  const sheet = document.getElementById('sheet');
+  prog.innerHTML = '';
+  sheet.className = 'sheet';
+
+  if(view.v==='home'){
+    crumb.innerHTML = 'Process library';
+    acts.innerHTML = `<button class="ghost-btn" onclick="nav({v:'sessions'})">Sessions</button>
+                      <button class="ghost-btn" onclick="nav({v:'analysis'})">Analysis</button>
+                      <button class="ghost-btn" onclick="nav({v:'import'})">Import CSV</button>
+                      <button class="ghost-btn" onclick="newProcess()">+ New process</button>`;
+    renderHome(sheet);
+  }
+  else if(view.v==='import'){
+    crumb.innerHTML = 'Import a process';
+    acts.innerHTML = `<button class="ghost-btn" onclick="nav({v:'home'})">Library</button>`;
+    sheet.className = 'sheet wide';
+    renderImport(sheet);
+  }
+  else if(view.v==='admin'){
+    crumb.innerHTML = `<b>${esc(PROC.name)}</b> · editing`;
+    acts.innerHTML = `
+      <span class="save-hint" id="saveHint" style="color:#8FB0C4"></span>
+      <button class="ghost-btn" onclick="nav({v:'home'})">Library</button>
+      <button class="ghost-btn" onclick="startSession()">Run session →</button>`;
+    sheet.className = 'sheet wide';
+    renderAdmin(sheet);
+  }
+  else if(view.v==='run'){
+    crumb.innerHTML = `<b>${esc(PROC.name)}</b> · session`;
+    acts.innerHTML = `
+      ${SESS.region?`<span class="region-badge">${esc(SESS.region)}${SESS.name?' · '+esc(SESS.name):''}</span>`:''}
+      <span class="save-hint" id="saveHint" style="color:#8FB0C4"></span>
+      ${true ? `
+        <button class="ghost-btn" onclick="nav({v:'admin'})">Edit</button>
+        <button class="ghost-btn warn" onclick="restartSession()">Restart</button>`
+      : `<button class="ghost-btn" onclick="nav({v:'home'})">Exit</button>`}`;
+    renderProgress(prog);
+    if(view.stepIdx >= PROC.steps.length){
+      renderSummary(sheet);
+    }
+    else renderStep(sheet);
+  }
+  else if(view.v==='analysis'){
+    crumb.innerHTML = 'Analysis';
+    acts.innerHTML = `<button class="ghost-btn" onclick="nav({v:'home'})">Library</button>`;
+    sheet.className = 'sheet wide';
+    renderAnalysis(sheet);
+  }
+  else if(view.v==='sessions'){
+    crumb.innerHTML = 'Sessions';
+    acts.innerHTML = `<button class="ghost-btn" onclick="nav({v:'home'})">Library</button>`;
+    sheet.className = 'sheet wide';
+    renderSessions(sheet);
+  }
+  render._after && render._after();
+}
+
+/* ---------- HOME ---------- */
+function renderHome(host){
+  if(!DB.index.length){
+    host.innerHTML = `
+      <h2 class="page">Process library</h2>
+      <p class="lede">Each process holds its own steps and the two documented versions you want to compare — the global SOP and the local operating sheet.</p>
+      <div class="empty-state">
+        <h3>No processes yet</h3>
+        <p>Create your first process, then add its steps and both document versions.</p>
+        <div class="row" style="justify-content:center">
+          <button class="btn" onclick="nav({v:'import'})">Import from CSV</button>
+          <button class="btn primary" onclick="newProcess()">+ New process</button>
+        </div>
+      </div>`;
+    return;
+  }
+  const rows = DB.index.map(r=>{
+    const st = r.status || 'draft';
+    return `<div class="pcard">
+      <div class="pinfo">
+        <div class="pname">${esc(r.name)}</div>
+        <div class="pmeta">${r.steps||0} step${r.steps===1?'':'s'}<span class="sep">·</span>${r.domain?esc(r.domain)+'<span class="sep">·</span>':''}updated ${r.updated?new Date(r.updated).toLocaleDateString():'—'}</div>
+      </div>
+      <span class="statuschip ${st}">${st==='ready'?'Ready':st==='inprog'?'In session':st==='done'?'Reviewed':'Draft'}</span>
+      <button class="btn sm" onclick="editProcess('${r.id}')">Edit</button>
+      <button class="btn sm primary" onclick="runProcess('${r.id}')">Run session</button>
+    </div>`;
+  }).join('');
+  host.innerHTML = `
+    <h2 class="page">Process library</h2>
+    <p class="lede">Each process holds its own steps and the two documented versions you want to compare. Run a session to check either against what the team actually does.</p>
+    <div class="plist">${rows}</div>`;
+}
+
+async function newProcess(){
+  const name = await askText({
+    title:'New process',
+    body:'Give it a name now — you can add steps and both document versions next.',
+    label:'Process name',
+    placeholder:'e.g. Export Customs Clearance',
+    okText:'Create'
+  });
+  if(!name) return;
+  const p = { id:uid(), name:name, domain:'', globalLabel:'Global SOP', localLabel:'Local Ops Sheet', steps:[], updated:new Date().toISOString() };
+  await sSet('proc:'+p.id, p);
+  DB.index.push({id:p.id, name:p.name, domain:'', steps:0, updated:p.updated, status:'draft'});
+  await saveIndex();
+  PROC = p; SESS = {responses:{}, assign:{}};
+  nav({v:'admin'});
+}
+async function editProcess(id){ await openProc(id); nav({v:'admin'}); }
+async function runProcess(id){
+  await openProc(id);
+  if(!SESS.region){ const ok = await captureRegion(); if(!ok) return; }
+  nav({v:'run', stepIdx:0});
+}
+async function startSession(){
+  if(!SESS.region){ const ok = await captureRegion(); if(!ok) return; }
+  nav({v:'run', stepIdx:0});
+}
+
+
+const REGIONS = ['US','AU','EMEA','NZ','SG','DE','HK','JP','KR','NB','SH','SZ','TH','TW','VN'];
+
+/* Region is captured before the first step and locked for the session.
+   It's the axis every cross-team comparison hangs off — a session
+   without it can't be told apart from any other team's run. */
+async function captureRegion(){
+  const r = await askRegion();
+  if(!r) return false;
+  SESS.region = r.region;
+  SESS.name = r.name;
+  SESS.startedAt = new Date().toISOString();
+  await saveSession();
+  const row = DB.index.find(x=>x.id===PROC.id);
+  if(row){ row.status='inprog'; await saveIndex(); }
+  return true;
+}
+
+/* ---------- ADMIN ---------- */
+function renderAdmin(host){
+  const issues = validateProc(PROC);
+  const issuesHTML = issues.length ? `
+    <div class="validate"><b>Before running a session:</b>
+      <ul>${issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const steps = PROC.steps.map((s,i)=>{
+    const open = view.openStep===i;
+    const gCount=(s.global||[]).length, lCount=(s.local||[]).length;
+    return `<div class="sedit ${open?'open':''}">
+      <div class="sedit-head" onclick="toggleStep(${i})">
+        <span class="sid">${esc(s.id||'—')}</span>
+        <span class="sname ${s.name?'':'untitled'}">${esc(s.name||'Untitled step')}</span>
+        <span class="scount">${s.agree?'shared':'G'+gCount+' / L'+lCount}</span>
+        <span class="chev">›</span>
+      </div>
+      <div class="sedit-body">${open?stepEditor(s,i):''}</div>
+    </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <h2 class="page">${esc(PROC.name)}</h2>
+    <p class="lede">Add each step, then write out what both documents say. During a session these are shown side by side without labels, so the team judges on content alone.</p>
+
+    <div class="row" style="gap:13px; margin-bottom:22px; align-items:flex-start">
+      <div style="flex:1; min-width:190px"><div class="field" style="margin:0">
+        <label>Process name</label>
+        <input class="fld" type="text" value="${esc(PROC.name)}" onchange="setProcField('name', this.value)">
+      </div></div>
+      <div style="flex:1; min-width:190px"><div class="field" style="margin:0">
+        <label>Domain / area (optional)</label>
+        <input class="fld" type="text" value="${esc(PROC.domain||'')}" placeholder="e.g. Ocean Freight · Origin Ops" onchange="setProcField('domain', this.value)">
+      </div></div>
+    </div>
+    <div class="row" style="gap:13px; margin-bottom:26px; align-items:flex-start">
+      <div style="flex:1; min-width:190px"><div class="field" style="margin:0">
+        <label>Authoritative version — what to call it</label>
+        <input class="fld" type="text" value="${esc(PROC.globalLabel)}" onchange="setProcField('globalLabel', this.value)">
+      </div></div>
+      <div style="flex:1; min-width:190px"><div class="field" style="margin:0">
+        <label>Local version — what to call it</label>
+        <input class="fld" type="text" value="${esc(PROC.localLabel)}" onchange="setProcField('localLabel', this.value)">
+      </div></div>
+    </div>
+
+    ${issuesHTML}
+
+    <div class="label">Steps<span class="hint">Shown in this order during the session. ${PROC.steps.length} total.</span></div>
+    <div class="steplist">${steps || '<div class="empty-state"><h3>No steps yet</h3><p>Add the first step of this process.</p></div>'}</div>
+
+    <div class="row">
+      <button class="btn primary" onclick="addStep()">+ Add step</button>
+      <span class="spacer"></span>
+      <button class="btn danger" onclick="deleteProcess()">Delete process</button>
+    </div>`;
+}
+
+function stepEditor(s, i){
+  const sub = (arr, which) => {
+    const rows = (arr||[]).map((d,j)=>`
+      <div class="subrow">
+        <input class="sref" type="text" value="${esc(d.ref)}" onchange="setSub(${i},'${which}',${j},'ref',this.value)">
+        <textarea onchange="setSub(${i},'${which}',${j},'text',this.value)" placeholder="What this sub-step says…">${esc(d.text)}</textarea>
+        <button class="del" title="Remove" onclick="delSub(${i},'${which}',${j})">✕</button>
+      </div>`).join('');
+    return (rows || `<p class="noneyet">Nothing written in this version — that's a valid answer, and the session will show it as blank.</p>`)
+      + `<button class="addsub" onclick="addSub(${i},'${which}')">+ Add sub-step</button>`;
+  };
+
+  return `
+    <div class="row" style="gap:13px; align-items:flex-start; margin-bottom:16px">
+      <div style="width:130px"><div class="field" style="margin:0">
+        <label>Step number</label>
+        <input class="fld" type="text" value="${esc(s.id)}" onchange="setStep(${i},'id',this.value)" placeholder="1.0">
+      </div></div>
+      <div style="flex:1; min-width:180px"><div class="field" style="margin:0">
+        <label>Step name</label>
+        <input class="fld" type="text" value="${esc(s.name)}" onchange="setStep(${i},'name',this.value)" placeholder="Receive Booking from Customer">
+      </div></div>
+      <div style="width:210px"><div class="field" style="margin:0">
+        <label>Owner</label>
+        <div class="officepick">
+          <button class="${s.office==='back'?'on':''}" onclick="setStep(${i},'office','back')">Back office</button>
+          <button class="${s.office==='front'?'on':''}" onclick="setStep(${i},'office','front')">Front office</button>
+        </div>
+      </div></div>
+    </div>
+
+    <label class="agreetoggle">
+      <input type="checkbox" ${s.agree?'checked':''} onchange="setStep(${i},'agree',this.checked)">
+      <span>
+        <span class="t">Both versions say the same thing</span>
+        <span class="d">Tick this when the documents agree. The session then shows one card and asks a simpler question instead of an A/B comparison.</span>
+      </span>
+    </label>
+
+    <div class="vergrid ${s.agree?'single':''}">
+      <div class="verbox global">
+        <h6>${esc(PROC.globalLabel)}</h6>
+        <p class="vdesc">${s.agree?'Shown to the group as the single agreed version.':'The authoritative version. Practice matching this scores as compliant.'}</p>
+        ${sub(s.global,'global')}
+      </div>
+      ${s.agree?'':`
+      <div class="verbox local">
+        <h6>${esc(PROC.localLabel)}</h6>
+        <p class="vdesc">What the local sheet says. Practice matching this but not the authoritative version flags as a risk.</p>
+        ${sub(s.local,'local')}
+      </div>`}
+    </div>
+
+    <div class="field" style="margin-top:16px; margin-bottom:0">
+      <label>Facilitator note (optional — shown only in the summary)</label>
+      <textarea class="fld" onchange="setStep(${i},'note',this.value)" placeholder="Context the reviewer should know when reading the results…">${esc(s.note||'')}</textarea>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="btn sm" onclick="moveStep(${i},-1)" ${i===0?'disabled':''}>↑ Move up</button>
+      <button class="btn sm" onclick="moveStep(${i},1)" ${i===PROC.steps.length-1?'disabled':''}>↓ Move down</button>
+      <span class="spacer"></span>
+      <button class="btn sm danger" onclick="delStep(${i})">Delete step</button>
+    </div>`;
+}
+
+function validateProc(p){
+  const out = [];
+  if(!p.steps.length) out.push('No steps added yet.');
+  p.steps.forEach((s,i)=>{
+    const label = s.id || s.name || ('step '+(i+1));
+    if(!s.name) out.push(`"${label}" has no name.`);
+    if(!(s.global||[]).length && !(s.local||[]).length) out.push(`"${label}" has no content in either version.`);
+    if(s.agree && !(s.global||[]).length) out.push(`"${label}" is marked as agreed but has no content.`);
+  });
+  return out;
+}
+
+function toggleStep(i){ view.openStep = (view.openStep===i? null : i); render(); }
+function setProcField(k,v){ PROC[k]=v; saveProc(); if(k!=='name') return; render(); }
+function setStep(i,k,v){ PROC.steps[i][k]=v; saveProc(); render(); }
+function setSub(i,which,j,k,v){ PROC.steps[i][which][j][k]=v; saveProc(); }
+function addSub(i,which){
+  const arr = PROC.steps[i][which] = PROC.steps[i][which]||[];
+  const next = String.fromCharCode(97 + arr.length);
+  arr.push({ref:next, text:''});
+  saveProc(); render();
+}
+function delSub(i,which,j){ PROC.steps[i][which].splice(j,1); saveProc(); render(); }
+function addStep(){
+  PROC.steps.push({ id:(PROC.steps.length+1)+'.0', name:'', office:'back', agree:false, local:[], global:[], note:'' });
+  view.openStep = PROC.steps.length-1;
+  saveProc(); render();
+}
+async function delStep(i){
+  const ok = await askConfirm({
+    title:'Delete this step?',
+    body:'Any session answers recorded for it will be lost.',
+    okText:'Delete step', danger:true
+  });
+  if(!ok) return;
+  const sid = PROC.steps[i].id;
+  PROC.steps.splice(i,1);
+  delete SESS.responses[sid]; delete SESS.assign[sid];
+  view.openStep = null;
+  saveProc(); saveSession(); render();
+}
+function moveStep(i,d){
+  const j=i+d; if(j<0||j>=PROC.steps.length) return;
+  const [s]=PROC.steps.splice(i,1); PROC.steps.splice(j,0,s);
+  view.openStep = j; saveProc(); render();
+}
+async function deleteProcess(){
+  const ok = await askConfirm({
+    title:'Delete this process?',
+    body:`"${PROC.name}" and all its session answers will be removed. This cannot be undone.`,
+    okText:'Delete process', danger:true
+  });
+  if(!ok) return;
+  await sDel('proc:'+PROC.id); await sDel('sess:'+PROC.id);
+  DB.index = DB.index.filter(r=>r.id!==PROC.id);
+  await saveIndex();
+  PROC=null; nav({v:'home'});
+}
+
+/* ---------- RUNNER ---------- */
+function renderProgress(host){
+  const pips = PROC.steps.map((s,i)=>{
+    const a = SESS.responses[s.id] && SESS.responses[s.id].val ? 'answered':'';
+    return `<div class="pip ${a} ${i===view.stepIdx?'current':''}" title="${esc(s.id)} ${esc(s.name)}" onclick="goTo(${i})"></div>`;
+  }).join('');
+  host.innerHTML = `<div class="progress-strip">${pips}
+    <div class="pip ${view.stepIdx===PROC.steps.length?'current':''}" title="Summary" onclick="goTo(${PROC.steps.length})"></div>
+  </div>`;
+}
+/* Cross-validation: a mix answer whose sequence is EXACTLY one card's
+   full sub-step set isn't a mix — it's an A or a B answer in disguise.
+   Returns 'a' | 'b' | null. */
+function mixIsPlainCopy(step){
+  const seq = (SESS.responses[step.id]||{}).picks || [];
+  if(!seq.length || seq.some(k=>k.startsWith('c:'))) return null;   // customs = genuinely a mix
+  const aIs = aIsFor(step)==='local' ? step.local : step.global;
+  const bIs = aIsFor(step)==='local' ? step.global : step.local;
+  const refs = seq.map(k=>k.split(':')[1]);
+  // order-sensitive: a reordered sequence is a different practice, not a copy
+  const sameOrdered = arr => arr.length===refs.length && arr.every((d,i)=> d.ref===refs[i]);
+  if(aIs.length && sameOrdered(aIs)) return 'a';
+  if(bIs.length && sameOrdered(bIs)) return 'b';
+  return null;
+}
+const MIX_COPY_MSG = copy => `The sequence you built matches <b>Card ${copy.toUpperCase()}</b> exactly — pick <b>${copy.toUpperCase()}</b> instead if that's what you do, or adjust the mix so it reflects what actually happens.`;
+
+function goTo(i){
+  // a "mix" answer must be a real mix: non-empty, and not just a
+  // verbatim copy of card A or card B
+  const cur = PROC.steps[view.stepIdx];
+  if(cur && i !== view.stepIdx){
+    const r = SESS.responses[cur.id]||{};
+    if(r.val==='mix'){
+      const e = document.getElementById('mixErr');
+      if(!(r.picks||[]).length){
+        if(e) e.innerHTML = 'Add at least one step to <b>What we actually do</b> before continuing.';
+        return;
+      }
+      const copy = mixIsPlainCopy(cur);
+      if(copy){
+        if(e) e.innerHTML = MIX_COPY_MSG(copy);
+        return;
+      }
+    }
+  }
+  view.stepIdx = Math.max(0, Math.min(PROC.steps.length, i)); render(); window.scrollTo(0,0);
+}
+
+function listHTML(arr, emptyMsg){
+  if(!arr || !arr.length) return `<p class="empty-note">${esc(emptyMsg)}</p>`;
+  return `<ul>${arr.map(d=>`<li data-ref="${esc(d.ref)}">${esc(d.text)}</li>`).join('')}</ul>`;
+}
+
+function renderStep(host){
+  const s = PROC.steps[view.stepIdx];
+  const saved = SESS.responses[s.id] || {};
+
+  let procHTML;
+  if(s.agree){
+    procHTML = `
+      <div class="label">What the procedure says<span class="hint">Both documents describe this step the same way.</span></div>
+      <div class="doc-card">
+        <div class="agree-note">Both versions agree</div>
+        ${listHTML(s.global, "Nothing documented.")}
+      </div>`;
+  } else {
+    const aIs = aIsFor(s);
+    const aData = aIs==='local' ? s.local : s.global;
+    const bData = aIs==='local' ? s.global : s.local;
+    const em = "This version has nothing written for this step.";
+    procHTML = `
+      <div class="label">Two versions of this step exist<span class="hint">Read both, then pick the one closest to what you actually do. Which document each version came from stays hidden for the whole session.</span></div>
+      <div class="versions">
+        <div class="vcard"><span class="vlabel">A</span>${listHTML(aData, em)}</div>
+        <div class="vcard"><span class="vlabel">B</span>${listHTML(bData, em)}</div>
+      </div>`;
+  }
+
+  const set = s.agree ? ANS_AGREE : ANS_DIFFER;
+  const answersHTML = set.map(a=>`
+    <button class="ans ${saved.val===a.val?'sel':''}" onclick="pick('${a.val}')">
+      <span class="key">${a.key}</span>
+      <span class="txt"><strong>${a.title}</strong><span>${a.sub}</span></span>
+    </button>`).join('');
+
+  const mixEmpty = saved.val==='mix' && !(saved.picks||[]).length;
+  const mixCopy = (!mixEmpty && saved.val==='mix') ? mixIsPlainCopy(s) : null;
+  const mixHTML = (!s.agree && saved.val==='mix')
+    ? `<div class="mixpick">
+         <p class="mixpick-lead">Drag the steps you actually do into <b>What we actually do</b>, in the order you do them. Pull from either version — or both. Anything you don't do, leave behind.</p>
+         <div id="mixHost"></div>
+         <div class="mixerr" id="mixErr">${mixEmpty?'Add at least one step to <b>What we actually do</b> before continuing.':mixCopy?MIX_COPY_MSG(mixCopy):''}</div>
+       </div>` : '';
+
+  host.innerHTML = `
+    <div class="step-meta">
+      <span class="step-counter">Step ${view.stepIdx+1} of ${PROC.steps.length}</span>
+    </div>
+    <h1 class="step-title"><span class="num">${esc(s.id)}</span>${esc(s.name)}</h1>
+    ${procHTML}
+    <div class="label">${s.agree?'Does this match what actually happens?':'Which is closer to what actually happens?'}</div>
+    <div class="answers">${answersHTML}</div>
+    ${mixHTML}
+    ${saved.val ? `<div class="followup">
+      <label>${esc(FOLLOWUP[saved.val]||'')}</label>
+      <textarea id="fuText" placeholder="Short answer is fine.">${esc(saved.note||'')}</textarea>
+    </div>` : ''}
+    <div class="nav">
+      <button class="btn" onclick="goTo(${view.stepIdx-1})" ${view.stepIdx===0?'disabled':''}>← Back</button>
+      <span class="spacer"></span>
+      <button class="btn primary" onclick="goTo(${view.stepIdx+1})">${view.stepIdx===PROC.steps.length-1?'Finish → Summary':'Next step →'}</button>
+    </div>`;
+
+  const ta = document.getElementById('fuText');
+  if(ta) ta.addEventListener('input', ()=>{
+    const c = SESS.responses[s.id] || {};
+    c.note = ta.value; SESS.responses[s.id] = c;
+    flagSaved(); saveSession();
+  });
+
+  if(!s.agree && saved.val==='mix') renderMix(s);
+}
+
+function pick(val){
+  const s = PROC.steps[view.stepIdx];
+  const c = SESS.responses[s.id] || {};
+  if(c.val!==val && val!=='mix'){ delete c.picks; delete c.customs; }
+  c.val = val; SESS.responses[s.id] = c;
+  saveSession(); render();
+  if(val!=='mix') setTimeout(()=>{ const t=document.getElementById('fuText'); if(t) t.focus(); },120);
+}
+
+/* ---------- mix builder ---------- */
+function subStepText(step, key){
+  const [side, ref] = key.split(':');
+  if(side==='c'){
+    const c = SESS.responses[step.id]||{};
+    return (c.customs && c.customs[ref]) ? c.customs[ref] : '';
+  }
+  const aIsLocal = aIsFor(step)==='local';
+  const isLocal = (side==='a') ? aIsLocal : !aIsLocal;
+  const arr = isLocal ? step.local : step.global;
+  const f = (arr||[]).find(d=>d.ref===ref);
+  return f ? f.text : '';
+}
+
+function renderMix(step){
+  const host = document.getElementById('mixHost');
+  if(!host) return;
+  const cur = SESS.responses[step.id]||{};
+  const seq = cur.picks || [];
+  const mAIs = aIsFor(step);
+  const aData = mAIs==='local' ? step.local : step.global;
+  const bData = mAIs==='local' ? step.global : step.local;
+
+  const chip = (d, side)=>{
+    const key = side+':'+d.ref, placed = seq.includes(key);
+    return `<div class="chip ${placed?'placed':''}" draggable="${placed?'false':'true'}" data-key="${esc(key)}" data-from="pool">
+      <span class="grip">⣿</span><span class="cref">${esc(d.ref)}</span>
+      <span class="ctext">${esc(d.text)}</span>
+      <button class="add-plus" data-add="${esc(key)}" title="Add">＋</button></div>`;
+  };
+  const pool = (data, side, L)=>`<div class="pool"><h6><span class="plabel">${L}</span> Version ${L}</h6>
+    ${(data&&data.length)?data.map(d=>chip(d,side)).join(''):'<p class="none">Nothing written in this version.</p>'}</div>`;
+
+  const seqHTML = seq.length ? seq.map((k,i)=>{
+      const isC = k.split(':')[0]==='c';
+      return `<div class="chip ${isC?'custom':''}" draggable="true" data-key="${esc(k)}" data-from="seq">
+        <span class="ord">${i+1}</span><span class="cref">${isC?'NEW':esc(k.split(':')[1])}</span>
+        <span class="ctext">${esc(subStepText(step,k))}</span>
+        <button class="drop-x" data-remove="${esc(k)}" title="Remove">✕</button></div>`;
+    }).join('') : `<div class="seq-empty">Drag steps here, or use ＋ — then drag to reorder.</div>`;
+
+  host.innerHTML = `
+    <div class="dnd">
+      <div class="pool-wrap">${pool(aData,'a','A')}${pool(bData,'b','B')}</div>
+      <div class="seq" id="seqZone">
+        <h6>What we actually do — in order</h6>
+        <div id="seqList">${seqHTML}</div>
+        <div class="addcustom">
+          <label>Something we do that's in neither version</label>
+          <div class="r"><input type="text" id="customInput" placeholder="Describe the step in your own words…">
+          <button id="customAdd">Add step</button></div>
+          <p class="hintline">Added to the end — drag it into position afterwards.</p>
+        </div>
+      </div>
+    </div>
+    <div class="mixcount">${seq.length} step${seq.length===1?'':'s'} in sequence</div>`;
+  bindMix(step);
+}
+
+function saveSeq(step, seq){
+  const c = SESS.responses[step.id]||{};
+  c.picks = seq; SESS.responses[step.id]=c;
+  const me = document.getElementById('mixErr');
+  if(me) me.textContent = '';
+  flagSaved(); saveSession(); renderMix(step);
+  // live cross-validation: the moment the sequence becomes an exact
+  // copy of A or B, say so instead of waiting for the Next click
+  const copy = seq.length ? mixIsPlainCopy(step) : null;
+  if(copy && me) me.innerHTML = MIX_COPY_MSG(copy);
+}
+
+function bindMix(step){
+  const cur = SESS.responses[step.id]||{};
+  let seq = (cur.picks||[]).slice();
+  const host=document.getElementById('mixHost'),
+        zone=document.getElementById('seqZone'),
+        list=document.getElementById('seqList');
+  if(!host||!zone||!list) return;
+
+  host.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation();
+    if(!seq.includes(b.dataset.add)){ seq.push(b.dataset.add); saveSeq(step,seq); }
+  }));
+  host.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation();
+    const k=b.dataset.remove;
+    seq=seq.filter(x=>x!==k);
+    if(k.split(':')[0]==='c'){
+      const c=SESS.responses[step.id]||{};
+      if(c.customs) delete c.customs[k.split(':')[1]];
+      SESS.responses[step.id]=c;
+    }
+    saveSeq(step,seq);
+  }));
+
+  const ci=document.getElementById('customInput'), cb=document.getElementById('customAdd');
+  function addCustom(){
+    const t=(ci.value||'').trim(); if(!t){ ci.focus(); return; }
+    const c=SESS.responses[step.id]||{}; c.customs=c.customs||{};
+    const id='c'+Date.now().toString(36).slice(-5);
+    c.customs[id]=t; SESS.responses[step.id]=c;
+    seq.push('c:'+id); ci.value='';
+    saveSeq(step,seq);
+    setTimeout(()=>{ const el=document.getElementById('customInput'); if(el) el.focus(); },60);
+  }
+  if(cb) cb.addEventListener('click',addCustom);
+  if(ci) ci.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCustom(); }});
+
+  let dragKey=null, dragFrom=null;
+  host.querySelectorAll('.chip[draggable="true"]').forEach(ch=>{
+    ch.addEventListener('dragstart',e=>{
+      dragKey=ch.dataset.key; dragFrom=ch.dataset.from;
+      ch.classList.add('dragging'); e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',dragKey);
+    });
+    ch.addEventListener('dragend',()=>{ ch.classList.remove('dragging'); clearLine(); });
+  });
+  function clearLine(){ list.querySelectorAll('.drop-line').forEach(l=>l.remove()); }
+  function idxFor(y){
+    const chips=Array.from(list.querySelectorAll('.chip:not(.dragging)'));
+    for(let i=0;i<chips.length;i++){
+      const r=chips[i].getBoundingClientRect();
+      if(y < r.top+r.height/2) return i;
+    }
+    return chips.length;
+  }
+  zone.addEventListener('dragover',e=>{
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    zone.classList.add('drag-over'); clearLine();
+    const i=idxFor(e.clientY), chips=Array.from(list.querySelectorAll('.chip:not(.dragging)'));
+    const line=document.createElement('div'); line.className='drop-line';
+    if(i>=chips.length) list.appendChild(line); else list.insertBefore(line,chips[i]);
+  });
+  zone.addEventListener('dragleave',e=>{ if(!zone.contains(e.relatedTarget)){ zone.classList.remove('drag-over'); clearLine(); }});
+  zone.addEventListener('drop',e=>{
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const i=idxFor(e.clientY); clearLine();
+    if(!dragKey) return;
+    const w=seq.filter(x=>x!==dragKey);
+    w.splice(Math.max(0,Math.min(w.length,i)),0,dragKey);
+    seq=w; saveSeq(step,seq);
+  });
+  host.querySelectorAll('.pool').forEach(p=>{
+    p.addEventListener('dragover',e=>{ if(dragFrom==='seq') e.preventDefault(); });
+    p.addEventListener('drop',e=>{
+      if(dragFrom!=='seq') return;
+      e.preventDefault(); seq=seq.filter(x=>x!==dragKey); saveSeq(step,seq);
+    });
+  });
+}
+
+/* ---------- resolution + summary ---------- */
+function resolvePicks(step, picks, assign, responses){
+  if(!picks||!picks.length) return null;
+  // optional assign/responses let the sessions record view classify a
+  // stored session without touching the globals SESS/PROC
+  const aIsLocal = ((assign||SESS.assign||{})[step.id])==='local';
+  const resp = (responses||SESS.responses||{})[step.id]||{};
+  const out={local:[],global:[],custom:[],order:[]};
+  picks.forEach(k=>{
+    const [side,ref]=k.split(':');
+    if(side==='c'){
+      out.custom.push((resp.customs&&resp.customs[ref])?resp.customs[ref]:'(untitled)');
+      out.order.push('NEW'); return;
+    }
+    const isLocal = (side==='a')?aIsLocal:!aIsLocal;
+    out[isLocal?'local':'global'].push(ref);
+    out.order.push((isLocal?'L':'G')+ref);
+  });
+  return out;
+}
+function picksText(step,picks,assign,responses,labels){
+  const r=resolvePicks(step,picks,assign,responses); if(!r) return '';
+  const gl=(labels&&labels.globalLabel)?labels.globalLabel:PROC.globalLabel;
+  const ll=(labels&&labels.localLabel)?labels.localLabel:PROC.localLabel;
+  const p=[];
+  if(r.local.length)  p.push(ll+': '+r.local.join(', '));
+  if(r.global.length) p.push(gl+': '+r.global.join(', '));
+  if(r.custom.length) p.push('In neither document: '+r.custom.join('; '));
+  p.push('Order: '+r.order.join(' → '));
+  return p.join('  ·  ');
+}
+
+
+function renderSummary(host){
+  // mark the session complete in the DB once, when the run reaches the
+  // summary — the analysis view only counts complete sessions
+  if(SESS.id && !SESS.submitted){ SESS.submitted = true; dbCompleteSession(SESS.id).catch(e=>saveFailed(e.message)); }
+  const counts={aligned:0,risk:0,stale:0,emergent:0,sequence:0,none:0};
+  const data = PROC.steps.map(s=>{
+    const r=SESS.responses[s.id]||{};
+    const v=classify(s,r.val,r.picks)||'none';
+    counts[v]++; return {s,r,v};
+  });
+  const rows = data.map(({s,r,v})=>{
+    const note = r.note&&r.note.trim()?esc(r.note.trim()):'<em>No detail captured.</em>';
+    const pk = picksText(s,r.picks);
+    return `<div class="sum-row">
+      <span class="badge ${v}">${VLABEL[v]}</span>
+      <div class="body">
+        <div class="name"><span class="id">${esc(s.id)}</span>${esc(s.name)}</div>
+        <div class="note">${note}</div>
+        ${pk?`<div class="action" style="border-left-color:var(--violet)"><b style="font-family:var(--mono);font-size:11px">Steps actually performed</b><br>${esc(pk)}</div>`:''}
+        <div class="action"${v==='none'?' style="border-left-color:var(--amber);color:var(--amber)"':''}>${esc(v!=='none'?VERDICT_ACTION[v]:VERDICT_ACTION_NONE)}</div>
+        ${s.note?`<div class="action" style="border-left-color:var(--ink-faint);color:var(--ink-soft)">${esc(s.note)}</div>`:''}
+      </div></div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <h2 class="page">Session summary</h2>
+    <p class="lede">${SESS.region?`<b>${esc(SESS.region)}${SESS.name?' · '+esc(SESS.name):''}</b> — e`:'E'}ach step classified by how actual practice lines up against both documents. Export before closing, then work the risk and stale items with the process owner.</p>
+    ${counts.none?`<div class="validate"><b>Incomplete session.</b> ${counts.none} of ${PROC.steps.length} steps have no answer recorded. Those aren't deviations — they're gaps in the data. Treat the conformance figures as provisional until they're filled in.</div>`:''}
+    <div class="tally">
+      <div><div class="n" style="color:var(--teal)">${counts.aligned}</div><div class="l">Aligned</div></div>
+      <div><div class="n" style="color:var(--red)">${counts.risk}</div><div class="l">Compliance risk</div></div>
+      <div><div class="n" style="color:var(--amber)">${counts.stale}</div><div class="l">Local doc stale</div></div>
+      <div><div class="n" style="color:var(--violet)">${counts.emergent}</div><div class="l">New practice</div></div>
+      <div><div class="n" style="color:var(--sequence)">${counts.sequence}</div><div class="l">Different order</div></div>
+      <div><div class="n" style="color:${counts.none?'var(--amber)':'var(--ink-faint)'}">${counts.none}</div><div class="l">No answer</div></div>
+    </div>
+    ${rows}
+    <div class="nav">
+      <button class="btn" onclick="goTo(${PROC.steps.length-1})">← Back to last step</button>
+      <button class="btn" onclick="nav({v:'home'})">Library</button>
+      <span class="save-hint" id="saveHint"></span>
+      <span class="spacer"></span>
+      <button class="btn" onclick="copyOut()">Copy as text</button>
+      <button class="btn primary" onclick="downloadCSV()">Download CSV</button>
+    </div>`;
+
+  const row = DB.index.find(r=>r.id===PROC.id);
+  if(row && counts.none < PROC.steps.length){ row.status = counts.none? 'inprog':'done'; saveIndex(); }
+}
+
+function buildRows(){
+  return PROC.steps.map(s=>{
+    const r=SESS.responses[s.id]||{};
+    const v=classify(s,r.val,r.picks)||'none';
+    return { id:s.id, name:s.name, office:s.office==='back'?'Back office':'Front office',
+             outcome:VLABEL[v], action:v!=='none'?VERDICT_ACTION[v]:'',
+             picks:picksText(s,r.picks), note:(r.note||'').trim() };
+  });
+}
+function copyOut(){
+  const t = `${PROC.name} — Process Review Session\nRegion: ${SESS.region||'—'}\nCompleted by: ${SESS.name||'—'}\nDate: ${new Date().toISOString().slice(0,10)}\n\n`
+    + buildRows().map(r=>`${r.id}  ${r.name}  [${r.office}]\n  Outcome: ${r.outcome}\n  Action: ${r.action||'—'}\n  Steps performed: ${r.picks||'—'}\n  Note: ${r.note||'—'}`).join('\n\n');
+  navigator.clipboard.writeText(t).then(()=>{
+    const h=document.getElementById('saveHint'); if(h){h.textContent='Copied'; setTimeout(()=>h.textContent='',1800);}
+  }).catch(()=>{ const h=document.getElementById('saveHint'); if(h) h.textContent='Copy failed — use CSV'; });
+}
+function downloadCSV(){
+  const q=v=>`"${String(v).replace(/"/g,'""')}"`;
+  const csv=['Process,Region,Completed by,Step,Name,Office,Outcome,Action,Steps performed,Note']
+    .concat(buildRows().map(r=>[PROC.name,SESS.region||'',SESS.name||'',
+            r.id,r.name,r.office,r.outcome,r.action,r.picks,r.note].map(q).join(',')))
+    .join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=PROC.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+(SESS.region||'session').toLowerCase()+'-'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
+async function restartSession(){
+  const ok = await askConfirm({
+    title:'Restart this session?',
+    body:'All answers for this process will be cleared.\n\nVersions A and B will be shuffled again, so a new group gets a different arrangement.',
+    okText:'Restart', danger:true
+  });
+  if(!ok) return;
+  SESS={responses:{},assign:{}};   // region cleared too — the next team enters their own
+  await saveSession();
+  const row=DB.index.find(r=>r.id===PROC.id); if(row){ row.status='ready'; await saveIndex(); }
+  goTo(0);
+}
+
+/* keyboard */
+document.addEventListener('keydown',e=>{
+  if(view.v!=='run') return;
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+  if(view.stepIdx>=PROC.steps.length) return;
+  const set = PROC.steps[view.stepIdx].agree ? ANS_AGREE : ANS_DIFFER;
+  const a = set.find(x=>x.key===e.key);
+  if(a){ pick(a.val); return; }
+  if(e.key==='ArrowRight') goTo(view.stepIdx+1);
+  if(e.key==='ArrowLeft')  goTo(view.stepIdx-1);
+});
+
+/* ============================================================
+   ANALYSIS — cross-region dashboard
+   Reads the SQL views via supabase-client.js. Verdicts come from
+   the same classification the reviewer saw on screen, so this
+   view can't drift from the app.
+   ============================================================ */
+
+/* Glyphs are chosen to be readable without the key:
+   ✓ done as written · ≠ different document · − parts removed
+   + something added · · no response */
+const DEV = {
+  aligned:  {code:'✓',  label:'Matches global',
+             hint:'Performed exactly as the global SOP describes.'},
+  source:   {code:'≠',  label:'Followed the local doc',
+             hint:'Followed the local sheet where it conflicts with global.'},
+  coverage: {code:'−',  label:'Parts of it skipped',
+             hint:'Some required sub-steps of the global SOP are not performed.'},
+  sequence: {code:'⇅',  label:'Done in a different order',
+             hint:'All required sub-steps happen, but not in the documented order.'},
+  emergent: {code:'+',  label:'Extra step added',
+             hint:'Work that appears in neither document.'},
+  none:     {code:'·',  label:'No response',
+             hint:'This region has not answered this step yet.'}
+};
+
+/* The app's verdict vocabulary (aligned / risk / stale / emergent / sequence)
+   mapped onto the matrix glyph language. */
+const VERDICT_GLYPH = { aligned:'aligned', risk:'coverage', stale:'source',
+                        emergent:'emergent', sequence:'sequence', none:'none' };
+
+const DIAG = {
+  conformant:{label:'Conformant', title:'All regions match global',
+    body:'Every region that responded performs this as the global SOP describes. No action.'},
+  sop_problem:{label:'SOP problem', title:'Every region deviates the same way',
+    body:'When nobody follows the SOP and they all diverge identically, the SOP is the outlier — not the regions. This is a strong candidate to amend globally rather than to enforce.'},
+  regional_outlier:{label:'Regional outlier', title:'One region out of line',
+    body:'The rest of the network conforms, so the SOP is workable as written. Correct the individual region.'},
+  fragmented:{label:'Fragmented', title:'Regions deviate differently',
+    body:'No shared practice exists here. Harmonising matters more than which version wins — decide the target state first, then roll it out.'},
+  no_data:{label:'No data', title:'Nobody has answered this step',
+    body:'No completed session covers this step yet. Run a review first.'}
+};
+
+const CELL_DETAIL = {
+  aligned: 'Performs this as the global SOP describes.',
+  coverage:'Parts of the global SOP are not performed.',
+  source:  'Follows the local document where it conflicts with global.',
+  sequence:'All required sub-steps happen, but not in the documented order.',
+  emergent:'Does additional work not described in either document.',
+  none:    'No response recorded for this step.'
+};
+
+let ANALYSIS = null;          // { proc, regions, steps:[{no,name,owner,cells:{R:{t,note,started_at}}}], dropoff, emergent }
+let analysisSelIdx = null;
+
+async function renderAnalysis(host){
+  host.innerHTML = `
+    <h2 class="page">Analysis</h2>
+    <p class="lede">Cross-region results, one process at a time. Every answer that isn't “matches global” is a deviation — what matters is the pattern across each row.</p>
+    <div class="field" style="max-width:440px">
+      <label>Process</label>
+      <select class="fld" id="analysisPick" onchange="loadAnalysisView(this.value)"></select>
+    </div>
+    <div id="analysisBody"></div>`;
+  const pick = document.getElementById('analysisPick');
+  const body = document.getElementById('analysisBody');
+  try{
+    const idx = await loadAnalysisIndex();
+    pick.innerHTML = idx.processes.map(p=>
+      `<option value="${esc(p.id)}">${esc(p.name)}${idx.withSessions.has(p.id)?'':' — no sessions yet'}</option>`).join('');
+    const first = idx.processes.find(p => idx.withSessions.has(p.id)) || idx.processes[0];
+    if(!first){
+      body.innerHTML = `<p class="lede" style="margin-top:16px">No processes yet — create one in the library first.</p>`;
+      return;
+    }
+    await loadAnalysisView(first.id);
+  }catch(e){
+    body.innerHTML = `<p class="lede" style="margin-top:16px;color:var(--red)">Couldn't load analysis: ${esc(e.message)}</p>`;
+  }
+}
+
+async function loadAnalysisView(procId){
+  const body = document.getElementById('analysisBody');
+  body.innerHTML = '<p class="lede" style="margin-top:16px">Loading…</p>';
+  try{
+    const [proc, data] = await Promise.all([sGet('proc:'+procId, null), loadAnalysis(procId)]);
+    if(!proc) throw new Error('Process not found.');
+
+    // Collapse the grid into one cell per step × region.
+    // The latest COMPLETE session per region wins, so a half-finished
+    // run never skews the matrix; diagnosis counts regions, not sessions.
+    const sessById = new Map((data.sessions||[]).map(s=>[s.id,s]));
+    const byStep = new Map();
+    const regionSet = new Set();
+    (data.grid||[]).forEach(row=>{
+      regionSet.add(row.region_code);
+      if(row.session_status !== 'complete') return;
+      let st = byStep.get(row.step_no);
+      if(!st){ st = { no:row.step_no, name:row.step_name, owner:row.global_office, cells:{} }; byStep.set(row.step_no, st); }
+      const c = st.cells[row.region_code];
+      if(!c || new Date(row.started_at) > new Date(c.started_at)){
+        st.cells[row.region_code] = { t: VERDICT_GLYPH[row.verdict] || 'none', note:row.note||'',
+          started_at:row.started_at, sessionId:row.session_id,
+          who:(sessById.get(row.session_id)||{}).participants||'' };
+      }
+    });
+    const regions = REGIONS.filter(r=>regionSet.has(r))
+      .concat([...regionSet].filter(r=>!REGIONS.includes(r)).sort());
+
+    // latest complete session per region — that's what feeds each matrix cell
+    const shownByRegion = {};
+    (data.sessions||[]).forEach(s=>{
+      if(s.status !== 'complete') return;
+      const cur = shownByRegion[s.region_code];
+      if(!cur || new Date(s.started_at) > new Date(cur.started_at)) shownByRegion[s.region_code] = s;
+    });
+
+    // responses keyed by `${session_id}|${step_no}` for the drilldown's
+    // "full step as performed" sequence
+    const noOf = {};
+    (data.grid||[]).forEach(row=>{ noOf[row.step_id] = row.step_no; });
+    const respByCell = new Map();
+    (data.responses||[]).forEach(r=>{
+      const no = noOf[r.step_id];
+      if(!no) return;
+      respByCell.set(r.session_id + '|' + no, {
+        answer: r.answer, note: r.note||'',
+        picks: (r.response_pick||[]).sort((a,b)=>a.seq-b.seq)
+      });
+    });
+
+    ANALYSIS = { proc, regions, steps:[...byStep.values()], dropoff:data.dropoff||[],
+                 emergent:data.emergent||[], sessions:data.sessions||[], shownByRegion, responses:respByCell };
+    analysisSelIdx = null;
+    renderAnalysisBody();
+  }catch(e){
+    body.innerHTML = `<p class="lede" style="margin-top:16px;color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+/* Row diagnosis — the core analytical move. Whether a deviation is
+   the SOP's fault or a region's is a property of the ROW, not the
+   cell. Mirrors v_step_diagnosis exactly. */
+function analysisDiagnose(step){
+  const cells = ANALYSIS.regions.map(r => (step.cells[r]||{t:'none'}).t).filter(t => t !== 'none');
+  if(!cells.length) return 'no_data';
+  const devs = cells.filter(t => t !== 'aligned');
+  if(!devs.length) return 'conformant';
+  if(devs.length === cells.length) return new Set(devs).size === 1 ? 'sop_problem' : 'fragmented';
+  return devs.length === 1 ? 'regional_outlier' : 'fragmented';
+}
+
+function renderAnalysisBody(){
+  const host = document.getElementById('analysisBody');
+  if(!ANALYSIS) return;
+  const { proc, regions, steps, dropoff, emergent } = ANALYSIS;
+  const REG = regions;
+  if(!steps.length || !REG.length){
+    host.innerHTML = `<p class="lede" style="margin-top:16px">No completed sessions yet — run a review for this process first, then come back here.</p>`;
+    return;
+  }
+
+  // headline conformance
+  let total=0, aligned=0;
+  const typeCount = {};
+  steps.forEach(s=>REG.forEach(r=>{
+    const c=s.cells[r]; if(!c || c.t==='none') return;
+    total++; if(c.t==='aligned') aligned++; else typeCount[c.t]=(typeCount[c.t]||0)+1;
+  }));
+  const pct = total? Math.round(aligned/total*100):0;
+  const devOrder = ['source','coverage','sequence','emergent'];
+  const maxDev = Math.max(1,...devOrder.map(k=>typeCount[k]||0));
+  const bars = devOrder.map(k=>`
+    <div class="bar">
+      <span class="bl">${DEV[k].label}</span>
+      <span class="track"><span class="fill" style="width:${((typeCount[k]||0)/maxDev*100)}%;background:var(--${k})"></span></span>
+      <span class="bn">${typeCount[k]||0}</span>
+    </div>`).join('');
+
+  // matrix
+  const rows = steps.map((s,i)=>{
+    const dg = analysisDiagnose(s);
+    const cells = REG.map(r=>{
+      const c = s.cells[r]||{t:'none'};
+      const t = c.t in DEV ? c.t : 'none';
+      return `<td class="cell"><span class="dot ${t}" title="${r} — ${DEV[t].label}: ${DEV[t].hint}${c.note?' ('+esc(c.note)+')':''}${c.who?' — '+esc(c.who):''}">${DEV[t].code}</span></td>`;
+    }).join('');
+    return `<tr class="${analysisSelIdx===i?'sel':''}" onclick="analysisSel(${i})">
+      <td class="stepc"><span class="id">${esc(s.no)}</span><span class="nm">${esc(s.name)}</span>
+        <span class="own">Global owner: ${s.owner==='back'?'Back office':'Front office'}</span></td>
+      ${cells}
+      <td class="diagc"><span class="diag ${dg}">${DIAG[dg].label}</span></td>
+    </tr>`;
+  }).join('');
+
+  // control drop-off (v_control_dropoff)
+  const missRows = dropoff.map(d=>`
+    <div class="covrow" title="${esc(d.body||'')} — skipped by ${esc(d.regions.join(', '))}">
+      <span class="ct"><b>${esc(d.step_no)}(${esc(d.ref)})</b> ${esc(d.step_name)}
+        <span class="cb">${esc(d.body||'')}</span>
+        <span class="cr">Skipped by ${esc(d.regions.join(', '))}</span></span>
+      <span class="track"><span class="fill" style="width:${Math.min(100,d.regions_skipping/REG.length*100)}%"></span></span>
+      <span class="cn">${d.regions_skipping}/${REG.length}<span class="cl">regions</span></span>
+    </div>`).join('');
+
+  // emergent register (v_emergent_register)
+  const emRows = emergent.map(e=>`
+    <div class="emrow">
+      <span class="rc">${esc(e.region_code)}</span>
+      <span class="rn">${esc(e.step_no)} · ${esc(e.step_name)}</span>
+      <span class="rt">${esc(e.custom_body)}${e.submitted_by?` <span style="color:var(--ink-faint)">— by ${esc(e.submitted_by)}</span>`:''}</span>
+    </div>`).join('');
+
+  // who submitted (every session for this process, newest first)
+  const subRows = ANALYSIS.sessions
+    .filter(s => s.status !== 'abandoned')
+    .sort((a,b) => new Date(b.started_at) - new Date(a.started_at))
+    .map(s => {
+      const shown = ANALYSIS.shownByRegion[s.region_code]?.id === s.id;
+      return `<div class="emrow">
+        <span class="rc">${esc(s.region_code)}</span>
+        <span class="rn">${esc(s.participants)||'—'} · ${new Date(s.started_at).toLocaleString()}</span>
+        <span class="rt">${s.status==='complete'?'Complete':'In progress'}${shown?' · <b>shown in matrix</b>':''}</span>
+      </div>`;
+    }).join('');
+
+  // action buckets
+  const buckets = {sop_problem:[], regional_outlier:[], fragmented:[]};
+  steps.forEach(s=>{ const d=analysisDiagnose(s); if(buckets[d]) buckets[d].push(s); });
+  const bl = arr => arr.length
+    ? arr.map(s=>`<b>${esc(s.no)}</b> ${esc(s.name)}`).join('<br>')
+    : '<span style="color:var(--ink-faint)">None.</span>';
+
+  host.innerHTML = `
+    <div class="an">
+    <h2 class="page">${esc(proc.name)}</h2>
+    <p class="lede">${esc(proc.domain||'')}${proc.domain?' · ':''}${REG.length} region${REG.length===1?'':'s'} surveyed · ${steps.length} steps. Every answer that isn't “matches global” is a deviation; what matters is the pattern across each row.</p>
+
+    <div class="head">
+      <div class="score">
+        <div class="n" style="color:${pct>=75?'var(--aligned)':pct>=50?'var(--source)':'var(--coverage)'}">${pct}%</div>
+        <div class="l">Conformance<br>${aligned} of ${total} answers</div>
+      </div>
+      <div class="bars">${bars}</div>
+    </div>
+
+    <div class="sect">Step × region matrix
+      <span class="h">Each cell is the latest completed session in that region. Read across a row: if every region deviates the same way, the SOP is the problem — not the regions.</span></div>
+    <div class="mx">
+      <table>
+        <thead><tr><th>Step</th>${REG.map(r=>`<th class="rg">${esc(r)}</th>`).join('')}<th class="dg">Diagnosis</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+
+    <div class="sect">Who submitted
+      <span class="h">Everyone who ran this process, newest first. The latest completed session per region is what the matrix shows — hover a cell for its exact submitter, or click a row for the per-region drilldown.</span></div>
+    <div class="cov">${subRows || '<p style="font-size:13px;color:var(--ink-faint)">No submissions yet.</p>'}</div>
+
+    <div class="keypanel">
+      ${['aligned','source','coverage','sequence','emergent','none'].map(k=>
+        `<div class="keyitem">
+           <span class="lk" style="background:var(--${k}-bg);color:var(--${k})">${DEV[k].code}</span>
+           <span class="ktxt"><b>${DEV[k].label}</b><em>${DEV[k].hint}</em></span>
+         </div>`).join('')}
+    </div>
+
+    <div id="analysisDrill"></div>
+
+    <div class="sect">Which global controls get dropped
+      <span class="h">Sub-steps of the global SOP that regions reported not performing. The count is how many regions surveyed skipped it — a control missed by most regions is either unworkable as written or not understood.</span></div>
+    <div class="cov">${missRows || '<p style="font-size:13px;color:var(--ink-faint)">No sub-step level gaps recorded.</p>'}</div>
+
+    <div class="sect">Emergent practices
+      <span class="h">Work reported that appears in neither document — candidates to formalise.</span></div>
+    <div class="cov">${emRows || '<p style="font-size:13px;color:var(--ink-faint)">No extra practices recorded.</p>'}</div>
+
+    <div class="sect">What to do next
+      <span class="h">Grouped by who needs to change — the SOP, a region, or the network.</span></div>
+    <div class="act">
+      <div class="actcard amend">
+        <div class="ah">Amend the global SOP</div>
+        <div class="ad">All regions deviate identically. Enforcing this is unlikely to work; the SOP doesn't describe how the work is really done.</div>
+        <div class="al">${bl(buckets.sop_problem)}</div>
+      </div>
+      <div class="actcard correct">
+        <div class="ah">Correct a single region</div>
+        <div class="ad">The rest of the network conforms, so the SOP is workable. Address the outlier directly.</div>
+        <div class="al">${bl(buckets.regional_outlier)}</div>
+      </div>
+      <div class="actcard harmonise">
+        <div class="ah">Harmonise first</div>
+        <div class="ad">Regions diverge in different directions. Agree a target state before enforcing anything.</div>
+        <div class="al">${bl(buckets.fragmented)}</div>
+      </div>
+    </div>
+    </div>`;
+
+  if(analysisSelIdx!==null) renderAnalysisDrill(steps[analysisSelIdx]);
+}
+
+function renderAnalysisDrill(s){
+  const dg = analysisDiagnose(s);
+  // invert the drop-off list: region -> missed global refs on this step
+  const missByRegion = {};
+  ANALYSIS.dropoff.forEach(d=>{
+    if(d.step_no !== s.no) return;
+    (d.regions||[]).forEach(rg=>{ (missByRegion[rg]=missByRegion[rg]||[]).push(d.ref); });
+  });
+  const rows = ANALYSIS.regions.map(r=>{
+    const c = s.cells[r]||{t:'none'};
+    const t = c.t in DEV ? c.t : 'none';
+    let detail = c.note ? c.note : CELL_DETAIL[t];
+    // front-office steps carry a role-deviation reading, not the generic text
+    if(s.owner==='front' && t!=='none'){
+      const role = (t==='aligned')
+        ? 'Front office responsibility — not doing this step is correct.'
+        : 'Front office responsibility — doing this step here is a role deviation.';
+      detail = role + (c.note ? ' — ' + c.note : '');
+    }
+    const miss = missByRegion[r];
+    const qs = [];
+    if(miss) qs.push(`Global sub-steps not performed: <b>${esc(miss.join(', '))}</b>`);
+    if(c.who) qs.push(`Submitted by <b>${esc(c.who)}</b>`);
+    // the full final sequence the region built (mix answers), with extras marked
+    const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
+    const seq = (resp && resp.picks && resp.picks.length) ? analysisSeqHTML(resp.picks) : '';
+    return `<div class="rrow">
+      <span class="rcode">${esc(r)}</span>
+      <span class="rtype" style="background:var(--${t}-bg);color:var(--${t})">${DEV[t].code} ${DEV[t].label}</span>
+      <span class="rdet">${esc(detail)}${qs.map(q=>`<span class="q">${q}</span>`).join('')}${seq}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('analysisDrill').innerHTML = `
+    <div class="drill">
+      <h3><span class="id">${esc(s.no)}</span>${esc(s.name)}</h3>
+      <div class="dsub">Global SOP assigns this to <b>${s.owner==='back'?'Back office':'Front office'}</b></div>
+      <div class="verdictbox ${dg}">
+        <div class="vt">${DIAG[dg].title}</div>
+        ${DIAG[dg].body}
+      </div>
+      <div class="rgrid">${rows}</div>
+    </div>`;
+}
+
+/* The complete sequence a region reported for one step (mix answers),
+   in execution order — custom items are marked as extras. */
+function analysisSeqHTML(picks){
+  const items = picks.map((p,i)=>{
+    const n = i+1;
+    if(p.source === 'custom'){
+      return `<li class="seq-item seq-extra"><span class="sq">+</span><span class="st">${esc(p.custom_body||'')}</span><span class="seq-src">extra</span></li>`;
+    }
+    const body = (p.substep && p.substep.body) ? p.substep.body : '';
+    const src = p.substep ? (p.substep.version==='global'?'global':'local') : p.source;
+    return `<li class="seq-item"><span class="sq">${n}.</span><span class="st">${esc(body||'')}</span><span class="seq-src">${esc(src)}</span></li>`;
+  });
+  const extras = picks.filter(p=>p.source==='custom').length;
+  const head = extras
+    ? `Full step as performed — <b class="seq-extra-txt">${extras} extra step${extras>1?'s':''} added, in neither document</b>`
+    : 'Full step as performed';
+  return `<div class="seqbox"><div class="seqhead">${head}</div><ol class="seqlist">${items.join('')}</ol></div>`;
+}
+
+function analysisSel(i){
+  analysisSelIdx = (analysisSelIdx===i ? null : i);
+  renderAnalysisBody();
+  if(analysisSelIdx!==null){
+    const d = document.getElementById('analysisDrill');
+    if(d) d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+
+/* ============================================================
+   SESSIONS — records management
+   List every review run, view a record's per-step answers, or
+   delete one. Deleting cascades to its assignments and responses.
+   ============================================================ */
+let SESS_PROCESSES = [];
+
+async function renderSessions(host){
+  host.innerHTML = `
+    <h2 class="page">Sessions</h2>
+    <p class="lede">Every review run, newest first. View a record to see each step's answer, or delete one to correct bad data — deleting removes the session and all its answers.</p>
+    <div class="row" style="margin-bottom:14px">
+      <select class="fld" id="sessFilter" style="max-width:320px" onchange="loadSessions(this.value)">
+        <option value="">All processes</option>
+      </select>
+      <span class="spacer"></span>
+      <button class="btn sm" onclick="loadSessions(document.getElementById('sessFilter').value)">Refresh</button>
+    </div>
+    <div id="sessList"><p class="lede">Loading…</p></div>`;
+  try{
+    SESS_PROCESSES = await loadProcessIndex();
+    const pick = document.getElementById('sessFilter');
+    pick.innerHTML = '<option value="">All processes</option>' +
+      SESS_PROCESSES.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+    await loadSessions('');
+  }catch(e){
+    document.getElementById('sessList').innerHTML = `<p class="lede" style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+async function loadSessions(processId){
+  const list = document.getElementById('sessList');
+  if(!list) return;
+  list.innerHTML = '<p class="lede">Loading…</p>';
+  try{
+    const rows = await dbListSessions(processId || null);
+    if(!rows.length){ list.innerHTML = '<p class="lede">No sessions recorded yet.</p>'; return; }
+    const chip = s => `<span class="schip ${s}">${{in_progress:'In progress',complete:'Complete',abandoned:'Abandoned'}[s]||s}</span>`;
+    const totalFor = pid => (SESS_PROCESSES.find(p=>p.id===pid)||{}).steps ?? '?';
+    list.innerHTML = `
+      <div class="sess-table">
+        <div class="sess-head"><span>Started</span><span>Process</span><span>Region</span><span>Submitted by</span><span>Status</span><span>Answered</span><span></span></div>
+        ${rows.map(r=>`
+          <div class="sess-row">
+            <span class="s-date">${new Date(r.started_at).toLocaleString()}</span>
+            <span>${esc(r.process)}</span>
+            <span class="s-region">${esc(r.region)}</span>
+            <span>${esc(r.name)||'—'}</span>
+            <span>${chip(r.status)}</span>
+            <span>${r.answered} / ${totalFor(r.process_id)}</span>
+            <span class="s-acts">
+              <button class="btn sm" onclick="viewSession('${r.id}')">View</button>
+              <button class="btn sm danger" onclick="deleteSession('${r.id}')">Delete</button>
+            </span>
+          </div>`).join('')}
+      </div>
+      <div id="sessDetail"></div>`;
+  }catch(e){
+    list.innerHTML = `<p class="lede" style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+async function viewSession(id){
+  const detail = document.getElementById('sessDetail');
+  if(!detail) return;
+  detail.innerHTML = '<p class="lede">Loading…</p>';
+  try{
+    const s = await dbLoadSessionById(id);
+    const proc = await sGet('proc:'+s.process_id, null);
+    if(!s || !proc) throw new Error('Session or process not found.');
+    const counts = {aligned:0,risk:0,stale:0,emergent:0,sequence:0,none:0};
+    const rows = proc.steps.map(st=>{
+      const r = s.responses[st.id]||{};
+      const v = classify(st, r.val, r.picks, s.assign, s.responses)||'none';
+      counts[v]++;
+      const note = r.note&&r.note.trim()?esc(r.note.trim()):'<em>No detail captured.</em>';
+      const pk = picksText(st, r.picks, s.assign, s.responses, proc);
+      return `<div class="sum-row">
+        <span class="badge ${v}">${VLABEL[v]}</span>
+        <div class="body">
+          <div class="name"><span class="id">${esc(st.id)}</span>${esc(st.name)}</div>
+          <div class="note">${note}</div>
+          ${pk?`<div class="action" style="border-left-color:var(--violet)"><b style="font-family:var(--mono);font-size:11px">Steps actually performed</b><br>${esc(pk)}</div>`:''}
+          <div class="action"${v==='none'?' style="border-left-color:var(--amber);color:var(--amber)"':''}>${esc(v!=='none'?VERDICT_ACTION[v]:VERDICT_ACTION_NONE)}</div>
+        </div></div>`;
+    }).join('');
+    detail.innerHTML = `
+      <div class="drill" style="margin-top:16px">
+        <h3>Session record</h3>
+        <div class="dsub"><b>${esc(s.region)}</b> · ${esc(s.name)||'no name'} · ${esc(proc.name)} · started ${new Date(s.started_at).toLocaleString()}${s.completed_at?' · completed '+new Date(s.completed_at).toLocaleString():''}</div>
+        <div class="tally">
+          <div><div class="n" style="color:var(--teal)">${counts.aligned}</div><div class="l">Aligned</div></div>
+          <div><div class="n" style="color:var(--red)">${counts.risk}</div><div class="l">Risk</div></div>
+          <div><div class="n" style="color:var(--amber)">${counts.stale}</div><div class="l">Stale</div></div>
+          <div><div class="n" style="color:var(--violet)">${counts.emergent}</div><div class="l">New</div></div>
+          <div><div class="n" style="color:var(--sequence)">${counts.sequence}</div><div class="l">Order</div></div>
+          <div><div class="n" style="color:var(--ink-faint)">${counts.none}</div><div class="l">No answer</div></div>
+        </div>
+        ${rows}
+        <div class="nav">
+          <span class="spacer"></span>
+          <button class="btn" onclick="document.getElementById('sessDetail').innerHTML=''">Close</button>
+        </div>
+      </div>`;
+    detail.scrollIntoView({behavior:'smooth', block:'start'});
+  }catch(e){
+    detail.innerHTML = `<p class="lede" style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+async function deleteSession(id){
+  const ok = await askConfirm({
+    title:'Delete this session?',
+    body:'Removes the record and all its answers. This cannot be undone.',
+    okText:'Delete', danger:true
+  });
+  if(!ok) return;
+  try{
+    await dbDeleteSession(id);
+    await loadSessions(document.getElementById('sessFilter').value);
+  }catch(e){ saveFailed(e.message); }
+}
+
+/* surface uncaught errors in the top bar so a failed save can't hide */
+window.addEventListener('error', e=>{
+  const h = document.getElementById('saveHint');
+  if(h){ h.textContent = 'Error: ' + (e.message||'unknown'); h.style.color = '#FF9C8A'; }
+});
+
+/* ---------- boot ---------- */
+(async function(){
+  DB.index = await sGet('proc:index', null) || [];
+  render();
+})();
+</script>
+</body>
+</html>
