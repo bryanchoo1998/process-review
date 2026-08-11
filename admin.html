@@ -512,6 +512,23 @@
     margin:2px 0; border-bottom:none; }
   .an .seq-item.seq-extra .st{ font-weight:600; color:var(--emergent); }
   .an .seq-item.seq-extra .seq-src{ color:var(--emergent); font-weight:700; text-transform:uppercase; }
+  /* the same sequence box outside the analysis view — the session
+     record renders one per step */
+  .seqbox{ margin-top:8px; border:1px solid var(--line); border-left:3px solid var(--emergent);
+    border-radius:6px; padding:8px 10px; background:#FDFCFE; }
+  .seqhead{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px;
+    color:var(--ink-soft); margin-bottom:6px; }
+  .seqhead .seq-extra-txt{ color:var(--emergent); }
+  .seqlist{ list-style:none; }
+  .seq-item{ display:grid; grid-template-columns:20px 1fr auto; gap:7px; font-size:12px;
+    line-height:1.45; padding:3px 0; border-bottom:1px dashed var(--line-soft); }
+  .seq-item:last-child{ border-bottom:none; }
+  .seq-item .sq{ font-family:var(--mono); color:var(--ink-faint); }
+  .seq-item .seq-src{ font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+  .seq-item.seq-extra{ background:var(--emergent-bg); border-radius:4px; padding:4px 6px;
+    margin:2px 0; border-bottom:none; }
+  .seq-item.seq-extra .st{ font-weight:600; color:var(--emergent); }
+  .seq-item.seq-extra .seq-src{ color:var(--emergent); font-weight:700; text-transform:uppercase; }
   .an .cov{ background:var(--card); border:1px solid var(--line); border-radius:11px; padding:20px 22px; }
   .an .covrow{ display:grid; grid-template-columns:1fr 128px 62px; gap:13px; align-items:center;
     padding:9px 0; border-bottom:1px solid var(--line-soft); font-size:12.5px; }
@@ -2571,6 +2588,41 @@ async function loadSessions(processId){
   }
 }
 
+/* The full step for one session-record row, whatever the answer — the
+   same logic as the analysis drilldown, but from the stored session
+   shape: mix answers replay the built sequence (app-side A/B refs
+   resolved back to the documents), every other answer synthesises the
+   full sub-step set of the version it names. Steps not performed (or
+   unanswered) have no sequence. */
+function sessionFullPicks(st, r, assign){
+  const val = r.val;
+  if(!val || val==='skip') return null;
+  if(r.picks && r.picks.length){
+    const aIs = (assign||{})[st.id]==='local' ? 'local' : 'global';
+    return r.picks.map(k=>{
+      const [side, ref] = k.split(':');
+      if(side==='c') return { source:'custom', custom_body:(r.customs||{})[ref]||'' };
+      const isLocal = (side==='a') ? aIs==='local' : aIs!=='local';
+      const arr = isLocal ? (st.local||[]) : (st.global||[]);
+      const d = arr.find(x=>x.ref===ref);
+      return { substep:{ ref, version: isLocal?'local':'global', body: d ? d.text : '' } };
+    });
+  }
+  let list=null, version=null;
+  if(st.agree){
+    list = st.global||[]; version='global';
+  } else if(val==='a' || val==='b'){
+    const aIs = (assign||{})[st.id]==='global' ? 'global' : 'local';
+    const picked = (val==='a') ? aIs : (aIs==='global' ? 'local' : 'global');
+    list = picked==='global' ? (st.global||[]) : (st.local||[]);
+    version = picked;
+  } else {
+    list = st.global||[]; version='global';   // extra / partial — the documented step is the reference
+  }
+  if(!list.length) return null;
+  return list.map(d=>({ substep:{ body:d.text, version } }));
+}
+
 async function viewSession(id){
   const detail = document.getElementById('sessDetail');
   if(!detail) return;
@@ -2585,13 +2637,15 @@ async function viewSession(id){
       const v = classify(st, r.val, r.picks, s.assign, s.responses)||'none';
       counts[v]++;
       const note = r.note&&r.note.trim()?esc(r.note.trim()):'<em>No detail captured.</em>';
-      const pk = picksText(st, r.picks, s.assign, s.responses, proc);
+      const picked = (st.agree ? ANS_AGREE : ANS_DIFFER).find(x=>x.val===r.val);
+      const seq = sessionFullPicks(st, r, s.assign);
       return `<div class="sum-row">
         <span class="badge ${v}">${VLABEL[v]}</span>
         <div class="body">
           <div class="name"><span class="id">${esc(st.id)}</span>${esc(st.name)}</div>
+          ${picked?`<div class="action" style="border-left-color:var(--teal)"><b style="font-family:var(--mono);font-size:11px">Selected</b><br>${esc(picked.title)}</div>`:''}
           <div class="note">${note}</div>
-          ${pk?`<div class="action" style="border-left-color:var(--violet)"><b style="font-family:var(--mono);font-size:11px">Steps actually performed</b><br>${esc(pk)}</div>`:''}
+          ${seq?`<div class="action" style="border-left-color:var(--violet)">${analysisSeqHTML(seq)}</div>`:''}
           <div class="action"${v==='none'?' style="border-left-color:var(--amber);color:var(--amber)"':''}>${esc(v!=='none'?VERDICT_ACTION[v]:VERDICT_ACTION_NONE)}</div>
         </div></div>`;
     }).join('');
