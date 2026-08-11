@@ -2061,8 +2061,8 @@ document.addEventListener('keydown',e=>{
 const DEV = {
   aligned:  {code:'✓',  label:'Matches global',
              hint:'Performed exactly as the global SOP describes.'},
-  source:   {code:'≠',  label:'Followed the local doc',
-             hint:'Followed the local sheet where it conflicts with global.'},
+  source:   {code:'≠',  label:'Local doc stale — follows global',
+             hint:'Practice matches the global SOP; the local sheet describes something else and should be updated.'},
   coverage: {code:'−',  label:'Parts of it skipped',
              hint:'Some required sub-steps of the global SOP are not performed.'},
   sequence: {code:'⇅',  label:'Done in a different order',
@@ -2094,7 +2094,7 @@ const DIAG = {
 const CELL_DETAIL = {
   aligned: 'Performs this as the global SOP describes.',
   coverage:'Parts of the global SOP are not performed.',
-  source:  'Follows the local document where it conflicts with global.',
+  source:  'Practice follows the global document — the local sheet is stale.',
   sequence:'All required sub-steps happen, but not in the documented order.',
   emergent:'Does additional work not described in either document.',
   none:    'No response recorded for this step.'
@@ -2380,7 +2380,21 @@ function renderAnalysisDrill(s){
   const rows = ANALYSIS.regions.map(r=>{
     const c = s.cells[r]||{t:'none'};
     const t = c.t in DEV ? c.t : 'none';
+    const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
+    // 'risk' cells are three different things in one glyph — name the one
+    // that actually happened so the chip agrees with the full-step box
+    let label = DEV[t].label;
     let detail = c.note ? c.note : CELL_DETAIL[t];
+    if(t==='coverage' && resp){
+      const ans = resp.answer;
+      if((ans==='a' || ans==='b') && (s.local||[]).length){
+        label = 'Followed the local doc';
+        if(!c.note) detail = 'Follows the local document where it conflicts with global.';
+      } else if(ans==='skip'){
+        label = 'Step not done';
+        if(!c.note) detail = 'The step is skipped entirely, or handled by another team.';
+      }
+    }
     // front-office steps carry a role-deviation reading, not the generic text
     if(s.owner==='front' && t!=='none'){
       const role = (t==='aligned')
@@ -2395,11 +2409,10 @@ function renderAnalysisDrill(s){
     // the full step as performed, whatever the answer — mix sequences are
     // replayed verbatim, other answers are synthesised from the version
     // the region says it follows
-    const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
     const seq = analysisFullSeqHTML(s, t, resp, c.sessionId);
     return `<div class="rrow">
       <span class="rcode">${esc(r)}</span>
-      <span class="rtype" style="background:var(--${t}-bg);color:var(--${t})">${DEV[t].code} ${DEV[t].label}</span>
+      <span class="rtype" style="background:var(--${t}-bg);color:var(--${t})">${DEV[t].code} ${label}</span>
       <span class="rdet">${esc(detail)}${qs.map(q=>`<span class="q">${q}</span>`).join('')}${seq}</span>
     </div>`;
   }).join('');
