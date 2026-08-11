@@ -2141,12 +2141,19 @@ async function loadAnalysisView(procId){
     // run never skews the matrix; diagnosis counts regions, not sessions.
     const sessById = new Map((data.sessions||[]).map(s=>[s.id,s]));
     const byStep = new Map();
+    const pstepById = new Map((proc.steps||[]).map(p=>[p.id,p]));
     const regionSet = new Set();
     (data.grid||[]).forEach(row=>{
       regionSet.add(row.region_code);
       if(row.session_status !== 'complete') return;
       let st = byStep.get(row.step_no);
-      if(!st){ st = { no:row.step_no, name:row.step_name, owner:row.global_office, cells:{} }; byStep.set(row.step_no, st); }
+      if(!st){
+        const pstep = pstepById.get(row.step_id);
+        st = { no:row.step_no, name:row.step_name, owner:row.global_office,
+               agree:!!(pstep&&pstep.agree), global:(pstep&&pstep.global)||[],
+               local:(pstep&&pstep.local)||[], cells:{} };
+        byStep.set(row.step_no, st);
+      }
       const c = st.cells[row.region_code];
       if(!c || new Date(row.started_at) > new Date(c.started_at)){
         st.cells[row.region_code] = { t: VERDICT_GLYPH[row.verdict] || 'none', note:row.note||'',
@@ -2179,8 +2186,17 @@ async function loadAnalysisView(procId){
       });
     });
 
+    // card assignment per cell — which document card A held for that
+    // session — so a plain A/B answer can be named in the full-step view
+    const assignByCell = new Map();
+    (data.assignments||[]).forEach(a=>{
+      const no = noOf[a.step_id]; if(!no) return;
+      assignByCell.set(a.session_id + '|' + no, a.a_version);
+    });
+
     ANALYSIS = { proc, regions, steps:[...byStep.values()], dropoff:data.dropoff||[],
-                 emergent:data.emergent||[], sessions:data.sessions||[], shownByRegion, responses:respByCell };
+                 emergent:data.emergent||[], sessions:data.sessions||[], shownByRegion,
+                 responses:respByCell, assignments:assignByCell };
     analysisSelIdx = null;
     renderAnalysisBody();
   }catch(e){
@@ -2372,9 +2388,11 @@ function renderAnalysisDrill(s){
     const qs = [];
     if(miss) qs.push(`Global sub-steps not performed: <b>${esc(miss.join(', '))}</b>`);
     if(c.who) qs.push(`Submitted by <b>${esc(c.who)}</b>`);
-    // the full final sequence the region built (mix answers), with extras marked
+    // the full step as performed, whatever the answer — mix sequences are
+    // replayed verbatim, other answers are synthesised from the version
+    // the region says it follows
     const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
-    const seq = (resp && resp.picks && resp.picks.length) ? analysisSeqHTML(resp.picks) : '';
+    const seq = analysisFullSeqHTML(s, t, resp, c.sessionId);
     return `<div class="rrow">
       <span class="rcode">${esc(r)}</span>
       <span class="rtype" style="background:var(--${t}-bg);color:var(--${t})">${DEV[t].code} ${DEV[t].label}</span>
@@ -2392,6 +2410,39 @@ function renderAnalysisDrill(s){
       </div>
       <div class="rgrid">${rows}</div>
     </div>`;
+}
+
+/* The full step as performed for one region row, whatever the answer.
+   Mix answers replay the exact sequence the reviewer built (customs
+   marked as extras). Every other answer synthesises the full sub-step
+   set of the version the region says it follows — the shared doc for
+   agree steps, the picked card for plain A/B answers (the session's
+   card assignment says which document A was; the stale verdict is the
+   fallback when no assignment was saved). Steps the region doesn't do,
+   and steps nobody answered, have no sequence to show. */
+function analysisFullSeq(s, t, resp, sessionId){
+  if(!resp || !resp.answer) return null;
+  const ans = resp.answer;
+  if(ans==='skip' || ans==='none') return null;
+  if(resp.picks && resp.picks.length) return resp.picks;
+  let list=null, version=null;
+  if(s.agree){
+    list = s.global||[]; version='global';
+  } else if(ans==='a' || ans==='b'){
+    const aIs = ANALYSIS.assignments.get(sessionId+'|'+s.no);
+    const picked = aIs ? ((ans==='a') ? aIs : (aIs==='global' ? 'local' : 'global'))
+                       : (t==='stale' ? 'global' : 'local');   // no assignment saved: read it off the verdict
+    list = picked==='global' ? (s.global||[]) : (s.local||[]);
+    version = picked;
+  } else {
+    list = s.global||[]; version='global';   // extra / partial — the documented step is the reference
+  }
+  if(!list.length) return null;
+  return list.map(d=>({ substep:{ body:d.text, version } }));
+}
+function analysisFullSeqHTML(s, t, resp, sessionId){
+  const seq = analysisFullSeq(s, t, resp, sessionId);
+  return seq && seq.length ? analysisSeqHTML(seq) : '';
 }
 
 /* The complete sequence a region reported for one step (mix answers),
