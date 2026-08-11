@@ -332,8 +332,18 @@ async function loadAnalysis(processId){
     responses = rp || [];
   }
 
+  // card assignments (which document was card A per session×step) — lets
+  // the drilldown name the version a plain A/B answer follows
+  let assignments = [];
+  if(sessIds.length){
+    const { data: asg, error: e6 } = await sb.from('session_card_assignment')
+      .select('session_id, step_id, a_version').in('session_id', sessIds);
+    if(e6) throw e6;
+    assignments = asg || [];
+  }
+
   return { grid: grid || [], dropoff: dropoff || [], emergent: emergent || [],
-           sessions: sessions || [], responses };
+           sessions: sessions || [], responses, assignments };
 }
 
 // Processes for the dashboard picker, plus which ones have sessions.
