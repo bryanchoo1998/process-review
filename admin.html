@@ -21,6 +21,7 @@
     --aligned:#1F7A6C;   --aligned-bg:#E4F1EE;
     --ownership:#3A6EA5; --ownership-bg:#E4EDF6;
     --source:#C77B18;    --source-bg:#FBF0DE;
+    --stale:#8A5A00;     --stale-bg:#F7EEDD;
     --coverage:#A93B2E;  --coverage-bg:#F8E4E1;
     --omission:#7A2118;  --omission-bg:#F3D9D5;
     --sequence:#6B7A8F;  --sequence-bg:#EAEEF2;
@@ -447,8 +448,11 @@
   .an .dot{ width:28px; height:28px; border-radius:6px; display:inline-grid; place-items:center;
     font-family:var(--mono); font-size:14px; font-weight:700; cursor:help; }
   .an .dot.aligned{ background:var(--aligned-bg); color:var(--aligned); }
-  .an .dot.source{ background:var(--source-bg); color:var(--source); }
+  .an .dot.localdoc{ background:var(--source-bg); color:var(--source); }
+  .an .dot.stale{ background:var(--stale-bg); color:var(--stale); }
   .an .dot.coverage{ background:var(--coverage-bg); color:var(--coverage); }
+  .an .dot.omitted{ background:var(--omission-bg); color:var(--omission); }
+  .an .dot.role{ background:var(--ownership-bg); color:var(--ownership); }
   .an .dot.sequence{ background:var(--sequence-bg); color:var(--sequence); }
   .an .dot.emergent{ background:var(--emergent-bg); color:var(--emergent); }
   .an .dot.none{ background:var(--none-bg); color:var(--none); }
@@ -2056,15 +2060,22 @@ document.addEventListener('keydown',e=>{
    ============================================================ */
 
 /* Glyphs are chosen to be readable without the key:
-   ✓ done as written · ≠ different document · − parts removed
-   + something added · · no response */
+   ✓ matches global · ≠ follows the local doc · ⚠ local doc stale
+   − parts skipped · ✕ step not done · ⇄ wrong office does it
+   ⇅ reordered · + something added · · no response */
 const DEV = {
   aligned:  {code:'✓',  label:'Matches global',
              hint:'Performed exactly as the global SOP describes.'},
-  source:   {code:'≠',  label:'Local doc stale — follows global',
+  localdoc: {code:'≠',  label:'Followed the local doc',
+             hint:'Follows the local sheet where it conflicts with global.'},
+  stale:    {code:'⚠',  label:'Local doc stale — follows global',
              hint:'Practice matches the global SOP; the local sheet describes something else and should be updated.'},
   coverage: {code:'−',  label:'Parts of it skipped',
              hint:'Some required sub-steps of the global SOP are not performed.'},
+  omitted:  {code:'✕',  label:'Step not done',
+             hint:'The step is skipped entirely, or handled by another team.'},
+  role:     {code:'⇄',  label:'Role deviation — doing this step',
+             hint:'Global assigns this step to the front office; doing it here is a role deviation.'},
   sequence: {code:'⇅',  label:'Done in a different order',
              hint:'All required sub-steps happen, but not in the documented order.'},
   emergent: {code:'+',  label:'Extra step added',
@@ -2074,8 +2085,9 @@ const DEV = {
 };
 
 /* The app's verdict vocabulary (aligned / risk / stale / emergent / sequence)
-   mapped onto the matrix glyph language. */
-const VERDICT_GLYPH = { aligned:'aligned', risk:'coverage', stale:'source',
+   mapped onto the matrix glyph language. 'risk' is one glyph in the matrix
+   but three different things — analysisCellType refines it per cell. */
+const VERDICT_GLYPH = { aligned:'aligned', risk:'coverage', stale:'stale',
                         emergent:'emergent', sequence:'sequence', none:'none' };
 
 const DIAG = {
@@ -2092,12 +2104,15 @@ const DIAG = {
 };
 
 const CELL_DETAIL = {
-  aligned: 'Performs this as the global SOP describes.',
-  coverage:'Parts of the global SOP are not performed.',
-  source:  'Practice follows the global document — the local sheet is stale.',
-  sequence:'All required sub-steps happen, but not in the documented order.',
-  emergent:'Does additional work not described in either document.',
-  none:    'No response recorded for this step.'
+  aligned:  'Performs this as the global SOP describes.',
+  localdoc: 'Follows the local document where it conflicts with global.',
+  stale:    'Practice follows the global document — the local sheet is stale.',
+  coverage: 'Parts of the global SOP are not performed.',
+  omitted:  'The step is skipped entirely, or handled by another team.',
+  role:     'Front office responsibility — doing this step here is a role deviation.',
+  sequence: 'All required sub-steps happen, but not in the documented order.',
+  emergent: 'Does additional work not described in either document.',
+  none:     'No response recorded for this step.'
 };
 
 let ANALYSIS = null;          // { proc, regions, steps:[{no,name,owner,cells:{R:{t,note,started_at}}}], dropoff, emergent }
@@ -2208,6 +2223,19 @@ async function loadAnalysisView(procId){
   }
 }
 
+/* 'risk' cells are three different things wearing one verdict. Name the
+   one that actually happened — the local doc followed, the step not
+   done, or a role deviation (front-office steps force the verdict
+   regardless of the pick, so they never claim a document). */
+function analysisCellType(s, t, resp){
+  if(t!=='coverage' || !resp) return t;
+  const ans = resp.answer;
+  if(s.owner==='front') return 'role';
+  if((ans==='a' || ans==='b') && (s.local||[]).length) return 'localdoc';
+  if(ans==='skip') return 'omitted';
+  return 'coverage';
+}
+
 /* Row diagnosis — the core analytical move. Whether a deviation is
    the SOP's fault or a region's is a property of the ROW, not the
    cell. Mirrors v_step_diagnosis exactly. */
@@ -2238,7 +2266,7 @@ function renderAnalysisBody(){
     total++; if(c.t==='aligned') aligned++; else typeCount[c.t]=(typeCount[c.t]||0)+1;
   }));
   const pct = total? Math.round(aligned/total*100):0;
-  const devOrder = ['source','coverage','sequence','emergent'];
+  const devOrder = ['stale','coverage','sequence','emergent'];
   const maxDev = Math.max(1,...devOrder.map(k=>typeCount[k]||0));
   const bars = devOrder.map(k=>`
     <div class="bar">
@@ -2253,7 +2281,9 @@ function renderAnalysisBody(){
     const cells = REG.map(r=>{
       const c = s.cells[r]||{t:'none'};
       const t = c.t in DEV ? c.t : 'none';
-      return `<td class="cell"><span class="dot ${t}" title="${r} — ${DEV[t].label}: ${DEV[t].hint}${c.note?' ('+esc(c.note)+')':''}${c.who?' — '+esc(c.who):''}">${DEV[t].code}</span></td>`;
+      const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
+      const rt = analysisCellType(s, t, resp);
+      return `<td class="cell"><span class="dot ${rt}" title="${r} — ${DEV[rt].label}: ${DEV[rt].hint}${c.note?' ('+esc(c.note)+')':''}${c.who?' — '+esc(c.who):''}">${DEV[rt].code}</span></td>`;
     }).join('');
     return `<tr class="${analysisSelIdx===i?'sel':''}" onclick="analysisSel(${i})">
       <td class="stepc"><span class="id">${esc(s.no)}</span><span class="nm">${esc(s.name)}</span>
@@ -2328,7 +2358,7 @@ function renderAnalysisBody(){
     <div class="cov">${subRows || '<p style="font-size:13px;color:var(--ink-faint)">No submissions yet.</p>'}</div>
 
     <div class="keypanel">
-      ${['aligned','source','coverage','sequence','emergent','none'].map(k=>
+      ${['aligned','localdoc','stale','coverage','omitted','role','sequence','emergent','none'].map(k=>
         `<div class="keyitem">
            <span class="lk" style="background:var(--${k}-bg);color:var(--${k})">${DEV[k].code}</span>
            <span class="ktxt"><b>${DEV[k].label}</b><em>${DEV[k].hint}</em></span>
@@ -2381,24 +2411,9 @@ function renderAnalysisDrill(s){
     const c = s.cells[r]||{t:'none'};
     const t = c.t in DEV ? c.t : 'none';
     const resp = (c.sessionId && ANALYSIS.responses) ? ANALYSIS.responses.get(c.sessionId + '|' + s.no) : null;
-    // 'risk' cells are three different things in one glyph — name the one
-    // that actually happened so the chip agrees with the full-step box
-    let label = DEV[t].label;
-    let detail = c.note ? c.note : CELL_DETAIL[t];
-    if(t==='coverage' && resp){
-      const ans = resp.answer;
-      if(s.owner==='front'){
-        // the role rule forces the verdict here — the pick doesn't say
-        // which document they follow, so don't name one
-        label = 'Role deviation — doing this step';
-      } else if((ans==='a' || ans==='b') && (s.local||[]).length){
-        label = 'Followed the local doc';
-        if(!c.note) detail = 'Follows the local document where it conflicts with global.';
-      } else if(ans==='skip'){
-        label = 'Step not done';
-        if(!c.note) detail = 'The step is skipped entirely, or handled by another team.';
-      }
-    }
+    // same refined type as the matrix dot, so chip and cell always agree
+    const rt = analysisCellType(s, t, resp);
+    let detail = c.note ? c.note : CELL_DETAIL[rt];
     // front-office steps carry a role-deviation reading, not the generic text
     if(s.owner==='front' && t!=='none'){
       const role = (t==='aligned')
@@ -2416,7 +2431,7 @@ function renderAnalysisDrill(s){
     const seq = analysisFullSeqHTML(s, t, resp, c.sessionId);
     return `<div class="rrow">
       <span class="rcode">${esc(r)}</span>
-      <span class="rtype" style="background:var(--${t}-bg);color:var(--${t})">${DEV[t].code} ${label}</span>
+      <span class="rtype" style="background:var(--${rt}-bg);color:var(--${rt})">${DEV[rt].code} ${DEV[rt].label}</span>
       <span class="rdet">${esc(detail)}${qs.map(q=>`<span class="q">${q}</span>`).join('')}${seq}</span>
     </div>`;
   }).join('');
@@ -2438,7 +2453,7 @@ function renderAnalysisDrill(s){
    marked as extras). Every other answer synthesises the full sub-step
    set of the version the region says it follows — the shared doc for
    agree steps, the picked card for plain A/B answers (the session's
-   card assignment says which document A was; the 'source' glyph is the
+   card assignment says which document A was; the 'stale' glyph is the
    fallback when no assignment was saved). Steps the region doesn't do,
    and steps nobody answered, have no sequence to show. */
 function analysisFullSeq(s, t, resp, sessionId){
@@ -2452,7 +2467,7 @@ function analysisFullSeq(s, t, resp, sessionId){
   } else if(ans==='a' || ans==='b'){
     const aIs = ANALYSIS.assignments.get(sessionId+'|'+s.no);
     const picked = aIs ? ((ans==='a') ? aIs : (aIs==='global' ? 'local' : 'global'))
-                       : (t==='source' ? 'global' : 'local');   // no assignment saved: read it off the verdict
+                       : (t==='stale' ? 'global' : 'local');   // no assignment saved: read it off the verdict
     list = picked==='global' ? (s.global||[]) : (s.local||[]);
     version = picked;
   } else {
