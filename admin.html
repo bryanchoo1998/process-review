@@ -2141,14 +2141,18 @@ async function loadAnalysisView(procId){
     // run never skews the matrix; diagnosis counts regions, not sessions.
     const sessById = new Map((data.sessions||[]).map(s=>[s.id,s]));
     const byStep = new Map();
-    const pstepById = new Map((proc.steps||[]).map(p=>[p.id,p]));
+    // steps carry the real PK as _id and the app-level id as id (step_no);
+    // grid rows carry the real PK as step_id — match on that, falling back
+    // to step_no for processes that were re-imported after sessions ran
+    const pstepById = new Map((proc.steps||[]).map(p=>[p._id,p]));
+    const pstepByNo  = new Map((proc.steps||[]).map(p=>[p.id,p]));
     const regionSet = new Set();
     (data.grid||[]).forEach(row=>{
       regionSet.add(row.region_code);
       if(row.session_status !== 'complete') return;
       let st = byStep.get(row.step_no);
       if(!st){
-        const pstep = pstepById.get(row.step_id);
+        const pstep = pstepById.get(row.step_id) || pstepByNo.get(row.step_no);
         st = { no:row.step_no, name:row.step_name, owner:row.global_office,
                agree:!!(pstep&&pstep.agree), global:(pstep&&pstep.global)||[],
                local:(pstep&&pstep.local)||[], cells:{} };
@@ -2417,7 +2421,7 @@ function renderAnalysisDrill(s){
    marked as extras). Every other answer synthesises the full sub-step
    set of the version the region says it follows — the shared doc for
    agree steps, the picked card for plain A/B answers (the session's
-   card assignment says which document A was; the stale verdict is the
+   card assignment says which document A was; the 'source' glyph is the
    fallback when no assignment was saved). Steps the region doesn't do,
    and steps nobody answered, have no sequence to show. */
 function analysisFullSeq(s, t, resp, sessionId){
@@ -2431,7 +2435,7 @@ function analysisFullSeq(s, t, resp, sessionId){
   } else if(ans==='a' || ans==='b'){
     const aIs = ANALYSIS.assignments.get(sessionId+'|'+s.no);
     const picked = aIs ? ((ans==='a') ? aIs : (aIs==='global' ? 'local' : 'global'))
-                       : (t==='stale' ? 'global' : 'local');   // no assignment saved: read it off the verdict
+                       : (t==='source' ? 'global' : 'local');   // no assignment saved: read it off the verdict
     list = picked==='global' ? (s.global||[]) : (s.local||[]);
     version = picked;
   } else {
