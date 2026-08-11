@@ -2387,7 +2387,11 @@ function renderAnalysisDrill(s){
     let detail = c.note ? c.note : CELL_DETAIL[t];
     if(t==='coverage' && resp){
       const ans = resp.answer;
-      if((ans==='a' || ans==='b') && (s.local||[]).length){
+      if(s.owner==='front'){
+        // the role rule forces the verdict here — the pick doesn't say
+        // which document they follow, so don't name one
+        label = 'Role deviation — doing this step';
+      } else if((ans==='a' || ans==='b') && (s.local||[]).length){
         label = 'Followed the local doc';
         if(!c.note) detail = 'Follows the local document where it conflicts with global.';
       } else if(ans==='skip'){
