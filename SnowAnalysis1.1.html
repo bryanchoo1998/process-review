@@ -78,6 +78,7 @@ const SHIPMENT_TABLE_RENDER_LIMIT = 500;
 // ServiceNow closed states — single source of truth for "open now" metrics.
 const CLOSED_STATES = ['Closed Complete', 'Closed Incomplete'];
 const CLOSED_INCOMPLETE_STATE = 'Closed Incomplete';
+const ON_HOLD_STATE = 'On Hold';
 function closedStatesSql() {
   return CLOSED_STATES.map(s => `'${s}'`).join(',');
 }
@@ -2558,21 +2559,21 @@ function shipmentItemsFromRows(rows) {
       a.number.localeCompare(b.number));
     const latest = tickets[tickets.length - 1];
     const isComplete = s => s.toLowerCase() === 'closed complete';
-    const isIncomplete = s => s.toLowerCase() === 'closed incomplete';
+    const isOnHold = s => s.toLowerCase() === ON_HOLD_STATE.toLowerCase();
     const single_complete = tickets.length === 1 && isComplete(tickets[0].state);
-    const incomplete_then_complete = tickets.length > 1 &&
-      tickets.some(t => isIncomplete(t.state)) && isComplete(latest.state);
+    const on_hold_then_complete = tickets.length > 1 &&
+      tickets.some(t => isOnHold(t.state)) && isComplete(latest.state);
     return {
       shipment_id, tickets, ticket_count: tickets.length,
       total_secs: tickets.reduce((sum, t) => sum + t.time_worked, 0),
       // Region follows the most recently opened ticket's assignment group,
       // matching the "latest state" that represents this shipment.
       region: regionOf(latest.agroup, latest.country), assignment_group: latest.agroup || '(unassigned)',
-      latest_state: latest.state, single_complete, incomplete_then_complete,
+      latest_state: latest.state, single_complete, on_hold_then_complete,
       description_matched: tickets.some(ticket => ticket.description_matched),
       description_matched_tickets: tickets.filter(ticket => ticket.description_matched),
       case_type: single_complete ? 'Single Closed Complete'
-        : incomplete_then_complete ? 'Closed Incomplete → Closed Complete'
+        : on_hold_then_complete ? 'On Hold → Complete'
         : 'Other sequence',
     };
   }).sort((a, b) => b.total_secs - a.total_secs || a.shipment_id.localeCompare(b.shipment_id));
@@ -2606,8 +2607,8 @@ function getQuickBookingShipmentAnalysis(filters = {}) {
   return {
     all: summarize(() => true),
     single_complete: summarize(x => x.single_complete),
-    incomplete_then_complete: summarize(x => x.incomplete_then_complete),
-    other: summarize(x => !x.single_complete && !x.incomplete_then_complete),
+    on_hold_then_complete: summarize(x => x.on_hold_then_complete),
+    other: summarize(x => !x.single_complete && !x.on_hold_then_complete),
     items,
   };
 }
@@ -2641,7 +2642,7 @@ function getShipmentAnalysisHotspots() {
       buckets.get(label).push(row);
     }
     const entries = [...buckets.entries()].map(([label, bucket]) => {
-      const affected = shipmentItemsFromRows(bucket).filter(item => item.incomplete_then_complete);
+      const affected = shipmentItemsFromRows(bucket).filter(item => item.on_hold_then_complete);
       const values = affected.map(item => item.total_secs);
       return {
         label,
@@ -2671,7 +2672,7 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
     return {
       limited: true, scope_ticket_count: scopedTicketCount,
       matched: { shipments: 0, total_secs: 0, avg_secs: 0, median_secs: 0, max_secs: 0, avg_tickets: 0 },
-      incomplete_then_complete: { shipments: 0, total_secs: 0, avg_secs: 0, median_secs: 0, max_secs: 0, avg_tickets: 0 },
+      on_hold_then_complete: { shipments: 0, total_secs: 0, avg_secs: 0, median_secs: 0, max_secs: 0, avg_tickets: 0 },
       items: [], matched_ticket_count: 0, unmatched_no_shipment_count: 0,
     };
   }
@@ -2728,7 +2729,7 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
   return {
     limited: false,
     matched: summarize(matchedItems),
-    incomplete_then_complete: summarize(matchedItems.filter(item => item.incomplete_then_complete)),
+    on_hold_then_complete: summarize(matchedItems.filter(item => item.on_hold_then_complete)),
     items: matchedItems,
     matched_ticket_count: inferredRows.length,
     unmatched_no_shipment_count: rows.filter(row => !row.shipment_id && !row.inferred_shipment_id).length,
@@ -5658,8 +5659,9 @@ function renderQuickBookingSection() {
     const r = regionTotals.get(x.region) || {
       region: x.region, shipments: 0, tickets: 0, total_secs: 0,
       single_shipments: 0, single_secs: 0,
-      incomplete_complete_shipments: 0, incomplete_complete_secs: 0,
-      values: [], single_values: [], incomplete_complete_values: [],
+      on_hold_complete_shipments: 0, on_hold_complete_secs: 0,
+      other_shipments: 0, other_secs: 0,
+      values: [], single_values: [], on_hold_complete_values: [], other_values: [],
     };
     r.shipments++;
     r.tickets += x.ticket_count;
@@ -5670,10 +5672,15 @@ function renderQuickBookingSection() {
       r.single_secs += x.total_secs;
       r.single_values.push(x.total_secs);
     }
-    if (x.incomplete_then_complete) {
-      r.incomplete_complete_shipments++;
-      r.incomplete_complete_secs += x.total_secs;
-      r.incomplete_complete_values.push(x.total_secs);
+    if (x.on_hold_then_complete) {
+      r.on_hold_complete_shipments++;
+      r.on_hold_complete_secs += x.total_secs;
+      r.on_hold_complete_values.push(x.total_secs);
+    }
+    if (!x.single_complete && !x.on_hold_then_complete) {
+      r.other_shipments++;
+      r.other_secs += x.total_secs;
+      r.other_values.push(x.total_secs);
     }
     regionTotals.set(x.region, r);
   }
@@ -5685,15 +5692,24 @@ function renderQuickBookingSection() {
     const mid = Math.floor(ordered.length / 2);
     return time(ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2);
   };
+  const regionMedian = values => {
+    if (!values.length) return '—';
+    const ordered = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(ordered.length / 2);
+    return time(ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2);
+  };
   const regionCards = [...regionTotals.values()].sort((a, b) => b.total_secs - a.total_secs || a.region.localeCompare(b.region)).map(r =>
     '<div class="kpi info"><div class="kpi-label">Region · ' + escHTML(r.region) + '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:5px 0 7px">' +
+      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:5px 0 7px">' +
         '<div><div class="kpi-label" style="font-size:0.62rem">Single Closed Complete</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.single_values, r.single_secs, r.single_shipments) + '</div>' +
           '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.single_shipments + ' shipments</div></div>' +
-        '<div><div class="kpi-label" style="font-size:0.62rem">Incomplete → Complete</div>' +
-          '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.incomplete_complete_values, r.incomplete_complete_secs, r.incomplete_complete_shipments) + '</div>' +
-          '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.incomplete_complete_shipments + ' shipments</div></div>' +
+        '<div><div class="kpi-label" style="font-size:0.62rem">On Hold → Complete</div>' +
+          '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.on_hold_complete_values, r.on_hold_complete_secs, r.on_hold_complete_shipments) + '</div>' +
+          '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.on_hold_complete_shipments + ' shipments</div></div>' +
+        '<div><div class="kpi-label" style="font-size:0.62rem">Median: Other sequences</div>' +
+          '<div class="kpi-value" style="font-size:1.3rem">' + regionMedian(r.other_values) + '</div>' +
+          '<div class="kpi-sub">median · ' + r.other_shipments + ' shipments</div></div>' +
       '</div>' +
       '<div class="kpi-sub">' + r.shipments.toLocaleString() + ' shipments · ' + r.tickets.toLocaleString() + ' tickets · ' +
         'total: ' + time(r.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
@@ -5702,7 +5718,7 @@ function renderQuickBookingSection() {
   const tableItems = visibleItems.slice(0, SHIPMENT_TABLE_RENDER_LIMIT);
   const rows = tableItems.map(x => {
     const tag = x.single_complete ? '<span class="b-verified">single completed</span>'
-      : x.incomplete_then_complete ? '<span class="p-rapid">incomplete → completed</span>'
+      : x.on_hold_then_complete ? '<span class="p-rapid">on hold → completed</span>'
       : '<span class="b-unverified">other</span>';
     const tickets = x.tickets.map(t =>
       '<div style="white-space:nowrap">' + escHTML(t.number) + ' · ' +
@@ -5792,12 +5808,12 @@ function renderQuickBookingSection() {
     ? '<div class="note">This file has ' + shipmentAnalysisHotspots.row_count.toLocaleString() +
       ' shipment-linked rows. Narrow the shipment scope below before running the detailed analysis; global hotspot rankings are paused to keep the page responsive.</div>'
     : '<div class="qb-hotspot-grid">' + hotspotPanels + '</div>';
-  const hotspotSection = '<section class="qb-hotspot-section" aria-label="Incomplete to Complete hotspots">' +
-    '<div class="qb-hotspot-heading"><div><h4>Incomplete → Complete hotspots</h4>' +
-      '<div class="note">All shipment-linked data. Rankings use only multi-ticket shipments that finish Closed Complete after at least one Closed Incomplete ticket. Each row shows total time, median time, and affected shipments.</div></div>' +
+  const hotspotSection = '<section class="qb-hotspot-section" aria-label="On Hold to Complete hotspots">' +
+    '<div class="qb-hotspot-heading"><div><h4>On Hold → Complete hotspots</h4>' +
+      '<div class="note">All shipment-linked data. Rankings use only multi-ticket shipments that finish Closed Complete after at least one On Hold ticket. Each row shows total time, median time, and affected shipments.</div></div>' +
       hotspotSortControl + '</div>' + hotspotGrid + '</section>';
   const descriptionMatchedTransitions = descriptionMatchedData.items
-    .filter(item => item.incomplete_then_complete)
+    .filter(item => item.on_hold_then_complete)
     .sort((a, b) => b.total_secs - a.total_secs || a.shipment_id.localeCompare(b.shipment_id));
   const descriptionMatchRows = descriptionMatchedTransitions.slice(0, 50).map(item => {
     const matchedTickets = item.description_matched_tickets.map(ticket =>
@@ -5807,26 +5823,30 @@ function renderQuickBookingSection() {
       '<td>' + matchedTickets + '</td><td class="num">' + item.ticket_count + '</td>' +
       '<td class="num"><b>' + time(item.total_secs) + '</b></td>' +
       '<td>' + escHTML(item.latest_state || '—') + '</td></tr>';
-  }).join('') || '<tr><td colspan="5" style="color:var(--text3)">No safely description-matched Incomplete → Complete sequences in this scope.</td></tr>';
+  }).join('') || '<tr><td colspan="5" style="color:var(--text3)">No safely description-matched On Hold → Complete sequences in this scope.</td></tr>';
   const descriptionMatchSection = descriptionMatchedData.limited
     ? '<section class="qb-desc-match-section" aria-label="Description-matched shipment analysis">' +
-      '<div class="qb-desc-match-heading"><div><h3>Incomplete → Complete (Desc Matching)</h3>' +
+      '<div class="note">Description matching is paused for this broad scope (' +
+      descriptionMatchedData.scope_ticket_count.toLocaleString() + ' tickets) to keep the page stable. Select a category, sub-category, or assignment group above to run this separate analysis.</div>' +
+      '<div class="qb-desc-match-heading"><div><h3>On Hold → Complete (Desc Matching)</h3>' +
+      '<div class="note">Description matching is paused for this broad scope (' +
+      descriptionMatchedData.scope_ticket_count.toLocaleString() + ' tickets) to keep the page stable. Select a category, sub-category, or assignment group above to run this separate analysis.</div>' +
       '<div class="note">Description matching is paused for this broad scope (' +
       descriptionMatchedData.scope_ticket_count.toLocaleString() + ' tickets) to keep the page stable. Select a category, sub-category, or assignment group above to run this separate analysis.</div>' +
       '</div></div></section>'
     : '<section class="qb-desc-match-section" aria-label="Description-matched shipment analysis">' +
-    '<div class="qb-desc-match-heading"><div><h3>Incomplete → Complete (Desc Matching)</h3>' +
+    '<div class="qb-desc-match-heading"><div><h3>On Hold → Complete (Desc Matching)</h3>' +
       '<div class="note">Separate from the shipment-ID result above. A ticket without a shipment ID is included only when its normalized short description is at least 12 characters and maps to one—and only one—explicit shipment ID. Descriptions mapped to multiple shipment IDs remain excluded.</div></div></div>' +
     '<div class="kpi-row">' +
       '<div class="kpi purple"><div class="kpi-label">No-ID tickets matched</div><div class="kpi-value">' +
         descriptionMatchedData.matched_ticket_count.toLocaleString() + '</div><div class="kpi-sub">unique, safe description matches</div></div>' +
       '<div class="kpi warn"><div class="kpi-label">No-ID tickets excluded</div><div class="kpi-value">' +
         descriptionMatchedData.unmatched_no_shipment_count.toLocaleString() + '</div><div class="kpi-sub">no unique description-to-shipment match</div></div>' +
-      summaryCard('Incomplete → Complete (Desc Matching)', descriptionMatchedData.incomplete_then_complete, 'purple',
-        'total ' + time(descriptionMatchedData.incomplete_then_complete.total_secs)) +
+      summaryCard('On Hold → Complete (Desc Matching)', descriptionMatchedData.on_hold_then_complete, 'purple',
+        'total ' + time(descriptionMatchedData.on_hold_then_complete.total_secs)) +
       '<div class="kpi info"><div class="kpi-label">All desc-matched shipments</div><div class="kpi-value">' +
         descriptionMatchedData.matched.shipments.toLocaleString() + '</div><div class="kpi-sub">includes every final state</div></div>' +
-    '</div><div class="note">Showing up to 50 matched Incomplete → Complete shipments, ordered by total time worked. The category, sub-category, and assignment-group scope above applies here too.</div>' +
+    '</div><div class="note">Showing up to 50 matched On Hold → Complete shipments, ordered by total time worked. The category, sub-category, and assignment-group scope above applies here too.</div>' +
     '<div class="tbl-wrap qb-desc-match-table"><table class="gtable"><thead><tr><th>Inferred shipment ID</th>' +
       '<th>Matched no-ID ticket(s)</th><th class="num">All tickets</th><th class="num">Total time</th><th>Latest state</th>' +
       '</tr></thead><tbody>' + descriptionMatchRows + '</tbody></table></div></section>';
@@ -5843,7 +5863,7 @@ function renderQuickBookingSection() {
     '<div class="kpi-row">' +
       summaryCard(metricLabel + ': all shipments', data.all, 'info', 'total ' + time(data.all.total_secs)) +
       summaryCard(metricLabel + ': Single Closed Complete', data.single_complete, 'green', 'one ticket only') +
-      summaryCard(metricLabel + ': Incomplete → Complete', data.incomplete_then_complete, 'danger', 'multi-ticket sequence') +
+      summaryCard(metricLabel + ': On Hold → Complete', data.on_hold_then_complete, 'danger', 'multi-ticket sequence') +
       summaryCard(metricLabel + ': Other sequences', data.other, 'warn', '') +
     '</div>' +
     '<div class="note" style="margin-top:10px">Region is taken from the assignment group of the shipment&apos;s latest opened ticket. Region cards reflect the table filters.</div>' +
