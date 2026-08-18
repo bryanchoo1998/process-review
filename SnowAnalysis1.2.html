@@ -4306,6 +4306,12 @@ if (typeof window !== 'undefined') {
   .kpi.danger .kpi-value { color: var(--red); }
   .kpi.info .kpi-value { color: var(--blue); }
   .kpi.purple .kpi-value { color: var(--purple); }
+  .qb-region-card { width: 100%; appearance: none; text-align: left; color: inherit; font: inherit; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+  .qb-region-card:hover { border-color: var(--blue); box-shadow: 0 2px 8px rgba(59,113,202,.15); transform: translateY(-1px); }
+  .qb-region-card.is-selected { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue), 0 2px 8px rgba(59,113,202,.16); background: #f5f9ff; }
+  .qb-region-card:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .qb-distribution-card { margin-top: 12px; }
+  .qb-distribution-card .chart-wrap { height: 310px; }
 
   .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; }
@@ -5608,10 +5614,11 @@ const quickBookingState = {
   filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
   sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total',
-  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, controlFocus: null,
+  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
 let shipmentAnalysisHotspots = null;
+let shipmentDistributionChart = null;
 const descriptionMatchedAnalysisCache = new Map();
 const QUICK_BOOKING_COLS = [
   { key: 'region', label: 'Region', num: false },
@@ -5672,6 +5679,73 @@ function clearQuickBookingTableFilters() {
   Object.keys(quickBookingState.filters).forEach(key => { quickBookingState.filters[key] = ''; });
   quickBookingState.page = 1;
   renderQuickBookingSection();
+}
+
+function quickBookingRegion(region) {
+  // A second click intentionally clears the selection, returning the chart
+  // to every visible region without changing table or analysis filters.
+  quickBookingState.selectedRegion = quickBookingState.selectedRegion === region ? '' : region;
+  renderQuickBookingSection();
+}
+
+function renderShipmentTimeDistribution(items, time) {
+  if (shipmentDistributionChart) {
+    try { shipmentDistributionChart.destroy(); } catch (_) { /* detached chart */ }
+    shipmentDistributionChart = null;
+  }
+  const canvas = document.getElementById('shipmentTimeDistribution');
+  if (!canvas || !items.length) return;
+  const divisor = quickBookingState.timeUnit === 'minutes' ? 60 : 3600;
+  const suffix = quickBookingState.timeUnit === 'minutes' ? 'm' : 'h';
+  const values = items.map(item => Math.max(0, item.total_secs / divisor));
+  const max = Math.max(...values);
+  const bandCount = max === 0 ? 1 : Math.min(16, Math.max(6, Math.ceil(Math.sqrt(values.length))));
+  const bandWidth = max === 0 ? 1 : max / bandCount;
+  const counts = Array(bandCount).fill(0);
+  for (const value of values) {
+    const index = max === 0 ? 0 : Math.min(bandCount - 1, Math.floor(value / bandWidth));
+    counts[index]++;
+  }
+  const precision = max < 10 ? 1 : 0;
+  const bandLabels = counts.map((_, index) => {
+    const low = index * bandWidth;
+    const high = (index + 1) * bandWidth;
+    return low.toFixed(precision) + '–' + high.toFixed(precision) + suffix;
+  });
+  const shares = counts.map(count => +(100 * count / values.length).toFixed(1));
+  // The second label line makes each band's own share visible without
+  // relying on an optional Chart.js data-label plugin.
+  const labels = bandLabels.map((label, index) => [label, shares[index] + '%']);
+  let running = 0;
+  const cumulative = counts.map(count => {
+    running += count;
+    return +(100 * running / values.length).toFixed(1);
+  });
+  shipmentDistributionChart = new Chart(canvas, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'Shipment share', data: shares, shipmentCounts: counts, backgroundColor: 'rgba(59,113,202,.72)', borderColor: '#3b71ca', borderWidth: 1, borderRadius: 3, yAxisID: 'y' },
+        { type: 'line', label: 'Cumulative share', data: cumulative, borderColor: '#dc3545', backgroundColor: '#dc3545', tension: .2, pointRadius: 2.5, pointHoverRadius: 4, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } },
+        tooltip: { callbacks: { label: context => context.dataset.yAxisID === 'y1'
+          ? context.dataset.label + ': ' + context.raw + '%'
+          : context.dataset.label + ': ' + context.raw + '% (' +
+            context.dataset.shipmentCounts[context.dataIndex].toLocaleString() + ' shipments)' } },
+      },
+      scales: {
+        x: { title: { display: true, text: 'Total time worked per shipment (' + suffix + ')' }, ticks: { maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 10 }, grid: { display: false } },
+        y: { beginAtZero: true, title: { display: true, text: 'Shipment share' }, ticks: { callback: value => value + '%' }, grid: { color: 'rgba(33,37,41,.08)' } },
+        y1: { position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'Cumulative share' }, ticks: { callback: value => value + '%' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
 }
 
 function quickBookingTimeUnit(unit) {
@@ -5806,8 +5880,17 @@ function renderQuickBookingSection() {
     const mid = Math.floor(ordered.length / 2);
     return time(ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2);
   };
+  if (state.selectedRegion && !regionTotals.has(state.selectedRegion)) state.selectedRegion = '';
+  const distributionItems = state.selectedRegion
+    ? visibleItems.filter(item => item.region === state.selectedRegion) : visibleItems;
+  const distributionScope = state.selectedRegion ? 'Region · ' + state.selectedRegion : 'All visible regions';
+  const distributionMedian = distributionItems.length
+    ? time(medianSecs(distributionItems.map(item => item.total_secs))) : '—';
   const regionCards = [...regionTotals.values()].sort((a, b) => b.total_secs - a.total_secs || a.region.localeCompare(b.region)).map(r =>
-    '<div class="kpi info"><div class="kpi-label">Region · ' + escHTML(r.region) + '</div>' +
+    '<button type="button" class="kpi info qb-region-card' + (state.selectedRegion === r.region ? ' is-selected' : '') +
+      '" data-region="' + attr(r.region) + '" aria-pressed="' + (state.selectedRegion === r.region ? 'true' : 'false') +
+      '" onclick="quickBookingRegion(this.dataset.region)"><div class="kpi-label">Region · ' + escHTML(r.region) +
+      (state.selectedRegion === r.region ? ' · selected' : '') + '</div>' +
       '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:5px 0 7px">' +
         '<div><div class="kpi-label" style="font-size:0.62rem">Single Closed Complete</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.single_values, r.single_secs, r.single_shipments) + '</div>' +
@@ -5824,7 +5907,13 @@ function renderQuickBookingSection() {
       '</div>' +
       '<div class="kpi-sub">' + r.shipments.toLocaleString() + ' shipments · ' + r.tickets.toLocaleString() + ' tickets · ' +
         'total: ' + time(r.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
-        regionMetric(r.values, r.total_secs, r.shipments) + '</div></div>').join('');
+        regionMetric(r.values, r.total_secs, r.shipments) + '</div></button>').join('');
+  const distributionSection = '<div class="chart-grid qb-distribution-card"><div class="chart-card full">' +
+    '<h3>Shipment time distribution · ' + escHTML(distributionScope) + '</h3>' +
+    '<div class="note">Bars show each total-time band&apos;s share of shipments (also printed below the band); hover to see the shipment count. The line shows the cumulative share of shipments completed within that band. ' +
+    (state.selectedRegion ? 'Click the selected region card again to return to all regions.' : 'Click a region card to filter this chart.') +
+    ' · ' + distributionItems.length.toLocaleString() + ' shipments · median ' + distributionMedian + '.</div>' +
+    '<div class="chart-wrap"><canvas id="shipmentTimeDistribution"></canvas></div></div></div>';
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
   if (state.page > totalPages) state.page = totalPages;
@@ -5998,6 +6087,7 @@ function renderQuickBookingSection() {
     '</div>' +
     '<div class="note" style="margin-top:10px">Region is taken from the assignment group of the shipment&apos;s latest opened ticket. Region cards reflect the table filters.</div>' +
     '<div class="kpi-row" style="margin-top:10px">' + regionCards + '</div>' +
+    distributionSection +
     '<div class="filter-meta"><span>' + (visibleItems.length ? (pageStart + 1).toLocaleString() + '–' +
       Math.min(pageStart + state.perPage, visibleItems.length).toLocaleString() : '0') +
       ' of ' + visibleItems.length.toLocaleString() + ' matching shipments (' + items.length.toLocaleString() + ' in analysis scope)</span>' +
@@ -6010,6 +6100,7 @@ function renderQuickBookingSection() {
       '<button onclick="clearQuickBookingTableFilters()">Clear filters</button></div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">#</th>' + headers + '</tr><tr>' + filters +
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
+  renderShipmentTimeDistribution(distributionItems, time);
   if (quickBookingState.controlFocus) {
     const focused = el.querySelector('[data-qb-control="' + quickBookingState.controlFocus + '"] button.active');
     if (focused) focused.focus();
