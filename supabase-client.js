@@ -58,7 +58,7 @@ async function loadProcess(id){
     .select(`
       id, name, domain, global_label, local_label, updated_at,
       step ( id, seq, step_no, name, office, agree, note,
-             substep ( version, seq, ref, body ) )
+             substep ( id, version, seq, ref, body ) )
     `)
     .eq('id', id)
     .single();
@@ -70,7 +70,7 @@ async function loadProcess(id){
       const pick = v => (s.substep || [])
         .filter(x => x.version === v)
         .sort((a,b) => a.seq - b.seq)
-        .map(x => ({ ref: x.ref, text: x.body }));
+        .map(x => ({ _id: x.id, ref: x.ref, text: x.body }));
       return {
         _id: s.id,                       // real PK, needed when writing responses
         id: s.step_no, name: s.name, office: s.office,
@@ -94,28 +94,85 @@ async function saveProcess(p){
   if(error) throw error;
   const pid = data.id;
 
-  // Replace steps wholesale. Simpler and safer than diffing, and the
-  // cascade clears substeps. Session answers reference step ids, so
-  // only do this while a process is still in draft.
-  await sb.from('step').delete().eq('process_id', pid);
+  // Keep existing rows in place. Responses and card assignments point to
+  // step IDs, so deleting/recreating definitions erases historical sessions
+  // through ON DELETE CASCADE.
+  const { data: oldSteps, error: oldError } = await sb.from('step')
+    .select('id').eq('process_id', pid);
+  if(oldError) throw oldError;
+
+  const keptStepIds = new Set(p.steps.map(s => s._id).filter(Boolean));
+  for(const [i, s] of p.steps.entries()){
+    if(!s._id) continue;
+    const { error: e } = await sb.from('step').update({
+      seq: -(i + 1), step_no: `__saving_${s._id}`
+    }).eq('id', s._id).eq('process_id', pid);
+    if(e) throw e;
+  }
+
+  // Deleting a step remains an explicit, confirmed destructive action in the
+  // UI. Ordinary settings changes never enter this branch.
+  const removedStepIds = (oldSteps || []).map(s => s.id).filter(id => !keptStepIds.has(id));
+  if(removedStepIds.length){
+    const { error: e } = await sb.from('step').delete().in('id', removedStepIds);
+    if(e) throw e;
+  }
 
   for(const [i, s] of p.steps.entries()){
-    const { data: st, error: e2 } = await sb.from('step').insert({
-      process_id: pid, seq: i + 1, step_no: s.id, name: s.name,
-      office: s.office, agree: !!s.agree, note: s.note || null
-    }).select('id').single();
-    if(e2) throw e2;
-
-    const subs = [];
-    ['global','local'].forEach(v =>
-      (s[v] || []).forEach((d, j) =>
-        subs.push({ step_id: st.id, version: v, seq: j + 1, ref: d.ref, body: d.text })));
-    if(subs.length){
-      const { error: e3 } = await sb.from('substep').insert(subs);
-      if(e3) throw e3;
+    let stepId = s._id;
+    if(stepId){
+      const { error: e } = await sb.from('step').update({
+        seq: i + 1, step_no: s.id, name: s.name, office: s.office,
+        agree: !!s.agree, note: s.note || null
+      }).eq('id', stepId).eq('process_id', pid);
+      if(e) throw e;
+    }else{
+      const { data: st, error: e } = await sb.from('step').insert({
+        process_id: pid, seq: i + 1, step_no: s.id, name: s.name,
+        office: s.office, agree: !!s.agree, note: s.note || null
+      }).select('id').single();
+      if(e) throw e;
+      stepId = s._id = st.id;
     }
+    await saveSubsteps(stepId, 'global', s.global || []);
+    await saveSubsteps(stepId, 'local', s.local || []);
   }
   return pid;
+}
+
+async function saveSubsteps(stepId, version, substeps){
+  const { data: existing, error: loadError } = await sb.from('substep')
+    .select('id').eq('step_id', stepId).eq('version', version);
+  if(loadError) throw loadError;
+
+  const keptIds = new Set(substeps.map(s => s._id).filter(Boolean));
+  for(const [i, s] of substeps.entries()){
+    if(!s._id) continue;
+    const { error: e } = await sb.from('substep').update({ seq: -(i + 1) })
+      .eq('id', s._id).eq('step_id', stepId);
+    if(e) throw e;
+  }
+
+  const removedIds = (existing || []).map(s => s.id).filter(id => !keptIds.has(id));
+  if(removedIds.length){
+    const { error: e } = await sb.from('substep').delete().in('id', removedIds);
+    if(e) throw e;
+  }
+
+  for(const [i, s] of substeps.entries()){
+    if(s._id){
+      const { error: e } = await sb.from('substep').update({
+        seq: i + 1, ref: s.ref, body: s.text
+      }).eq('id', s._id).eq('step_id', stepId);
+      if(e) throw e;
+    }else{
+      const { data, error: e } = await sb.from('substep').insert({
+        step_id: stepId, version, seq: i + 1, ref: s.ref, body: s.text
+      }).select('id').single();
+      if(e) throw e;
+      s._id = data.id;
+    }
+  }
 }
 
 /* ------------------------------------------------------------
