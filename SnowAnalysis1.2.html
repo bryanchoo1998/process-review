@@ -4336,6 +4336,16 @@ if (typeof window !== 'undefined') {
   .qb-category-region .volume-cell b { display: block; color: var(--blue); font-size: .78rem; }
   .qb-category-region .volume-cell span { display: block; margin-top: 1px; color: var(--text3); font-size: .62rem; }
   .qb-category-region .volume-cell .time { color: var(--text2); font-weight: 700; }
+  .qb-category-region .qb-matrix-sort-header { padding: 0; cursor: pointer; }
+  .qb-category-region .qb-matrix-sort-button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 7px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: 700; padding: 7px 9px; text-align: inherit; white-space: nowrap; }
+  .qb-category-region .qb-matrix-sort-button:hover { color: var(--blue); background: #e8f0fe; }
+  .qb-category-region .qb-matrix-sort-button.active { color: var(--blue); background: #e8f0fe; }
+  .qb-category-region .qb-matrix-sort-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .qb-category-region .qb-matrix-sort-arrow { color: var(--blue); font-size: .72rem; }
+  .qb-category-region .qb-matrix-category-button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 7px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 7px 9px; text-align: left; }
+  .qb-category-region .qb-matrix-category-button:hover { color: var(--blue); background: #e8f0fe; }
+  .qb-category-region .qb-matrix-category-button.active { color: var(--blue); background: #e8f0fe; box-shadow: inset 3px 0 0 var(--blue); }
+  .qb-category-region .qb-matrix-category-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
   .qb-category-region .gtable th:first-child { position: sticky; left: 0; z-index: 3; background: var(--surface2); min-width: 190px; }
   .qb-category-region .gtable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; }
   .qb-category-region .gtable tfoot td { background: var(--surface2); border-top: 2px solid var(--border); }
@@ -5641,7 +5651,7 @@ function renderBaselineTable() {
 const quickBookingState = {
   filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
-  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total',
+  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', categoryMatrixCategoryDir: 'desc', categoryMatrixSortRegion: '', categoryMatrixSelectedCategory: '',
   page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
@@ -5905,6 +5915,24 @@ function quickBookingTimeMetric(metric) {
   renderQuickBookingSection();
 }
 
+function quickBookingCategoryMatrixTimeSort(axis, region = '') {
+  const targetRegion = axis === 'region' ? region : '';
+  if (quickBookingState.categoryMatrixSortRegion === targetRegion) {
+    quickBookingState.categoryMatrixCategoryDir = quickBookingState.categoryMatrixCategoryDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    quickBookingState.categoryMatrixSortRegion = targetRegion;
+    quickBookingState.categoryMatrixCategoryDir = 'desc';
+  }
+  quickBookingState.controlFocus = targetRegion ? 'matrix-region-sort' : 'matrix-category-sort';
+  renderQuickBookingSection();
+}
+
+function quickBookingCategoryMatrixSelect(category) {
+  quickBookingState.categoryMatrixSelectedCategory = quickBookingState.categoryMatrixSelectedCategory === category ? '' : category;
+  quickBookingState.controlFocus = quickBookingState.categoryMatrixSelectedCategory ? 'matrix-category-select' : null;
+  renderQuickBookingSection();
+}
+
 function quickBookingHotspotSort(sort) {
   quickBookingState.hotspotSort = sort === 'median' ? 'median' : 'total';
   quickBookingState.controlFocus = 'hotspots';
@@ -6019,6 +6047,14 @@ function renderQuickBookingSection() {
     const mid = Math.floor(ordered.length / 2);
     return time(ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2);
   };
+  const selectedMetricSeconds = cell => {
+    if (!cell || !cell.shipments) return 0;
+    if (quickBookingState.timeMetric === 'average') return cell.total_secs / cell.shipments;
+    const ordered = [...cell.values].sort((a, b) => a - b);
+    if (quickBookingState.timeMetric === 'max') return ordered[ordered.length - 1] || 0;
+    const mid = Math.floor(ordered.length / 2);
+    return ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2;
+  };
   const regionMedian = values => {
     if (!values.length) return '—';
     const ordered = [...values].sort((a, b) => a - b);
@@ -6106,7 +6142,7 @@ function renderQuickBookingSection() {
   // per category/region cell, while every matching ticket contributes to the
   // ticket and category-allocated time shown below it.
   const categoryRegion = new Map();
-  const categoryRegions = [...regionTotals.keys()].sort((a, b) => a.localeCompare(b));
+  const availableCategoryRegions = [...regionTotals.keys()];
   for (const item of visibleItems) {
     const ticketCountsByCategory = new Map();
     for (const ticket of item.tickets) {
@@ -6127,13 +6163,30 @@ function renderQuickBookingSection() {
       byRegion.set(item.region, cell);
     }
   }
+  if (state.categoryMatrixSelectedCategory && !categoryRegion.has(state.categoryMatrixSelectedCategory)) {
+    state.categoryMatrixSelectedCategory = '';
+  }
   const categoryRegionRows = [...categoryRegion.entries()].map(([category, byRegion]) => {
     const total = [...byRegion.values()].reduce((sum, cell) => ({
       shipments: sum.shipments + cell.shipments, tickets: sum.tickets + cell.tickets,
       total_secs: sum.total_secs + cell.total_secs, values: sum.values.concat(cell.values),
     }), { shipments: 0, tickets: 0, total_secs: 0, values: [] });
     return { category, byRegion, total };
-  }).sort((a, b) => b.total.shipments - a.total.shipments || b.total.tickets - a.total.tickets || a.category.localeCompare(b.category));
+  }).sort((a, b) => {
+    const direction = state.categoryMatrixCategoryDir === 'asc' ? 1 : -1;
+    const aCell = state.categoryMatrixSortRegion ? a.byRegion.get(state.categoryMatrixSortRegion) : a.total;
+    const bCell = state.categoryMatrixSortRegion ? b.byRegion.get(state.categoryMatrixSortRegion) : b.total;
+    const timeDelta = selectedMetricSeconds(aCell) - selectedMetricSeconds(bCell);
+    return timeDelta * direction || b.total.shipments - a.total.shipments ||
+      b.total.tickets - a.total.tickets || a.category.localeCompare(b.category);
+  });
+  const selectedCategoryRegions = state.categoryMatrixSelectedCategory
+    ? categoryRegion.get(state.categoryMatrixSelectedCategory) : null;
+  const categoryRegions = availableCategoryRegions.sort((a, b) => {
+    if (!selectedCategoryRegions) return a.localeCompare(b);
+    const timeDelta = selectedMetricSeconds(selectedCategoryRegions.get(b)) - selectedMetricSeconds(selectedCategoryRegions.get(a));
+    return timeDelta || a.localeCompare(b);
+  });
   const categoryRegionTotals = {
     shipments: visibleItems.length,
     tickets: visibleItems.reduce((sum, item) => sum + item.ticket_count, 0),
@@ -6145,18 +6198,40 @@ function renderQuickBookingSection() {
       cell.tickets.toLocaleString() + ' tickets</span><span class="time">' + escHTML(metricLabel) + ': ' +
       regionMetric(cell.values, cell.total_secs, cell.shipments) + '</span></td>'
     : '<td class="volume-cell" style="color:var(--text3)">—</td>';
+  const categorySortArrow = state.categoryMatrixCategoryDir === 'desc' ? '&#9660;' : '&#9650;';
+  const categoryRegionHeaders = '<thead><tr>' +
+    '<th data-qb-control="' + (state.categoryMatrixSortRegion ? '' : 'matrix-category-sort') + '" class="qb-matrix-sort-header"><button type="button" class="qb-matrix-sort-button ' +
+      (state.categoryMatrixSortRegion ? '' : 'active') + '" ' +
+      'onclick="quickBookingCategoryMatrixTimeSort(\'category\')" aria-label="Sort categories by ' + escHTML(metricLabel.toLowerCase()) + ' time; currently ' +
+      (state.categoryMatrixCategoryDir === 'desc' ? 'high to low' : 'low to high') + '">Category ' +
+      (!state.categoryMatrixSortRegion ? '<span class="qb-matrix-sort-arrow" aria-hidden="true">' + categorySortArrow + '</span>' : '') + '</button></th>' +
+    categoryRegions.map(region => {
+      const isActive = state.categoryMatrixSortRegion === region;
+      return '<th' + (isActive ? ' data-qb-control="matrix-region-sort"' : '') + ' class="num qb-matrix-sort-header"><button type="button" class="qb-matrix-sort-button ' +
+        (isActive ? 'active' : '') + '" onclick="quickBookingCategoryMatrixTimeSort(\'region\', ' + attr(JSON.stringify(region)) + ')" ' +
+        'aria-label="Sort categories by ' + escHTML(metricLabel.toLowerCase()) + ' time in ' + attr(region) + '; currently ' +
+        (isActive && state.categoryMatrixCategoryDir === 'asc' ? 'low to high' : 'high to low') + '">' + escHTML(region) +
+        (isActive ? ' <span class="qb-matrix-sort-arrow" aria-hidden="true">' + categorySortArrow + '</span>' : '') + '</button></th>';
+    }).join('') + '<th class="num">Total</th></tr></thead>';
+  const selectedCategoryNote = state.categoryMatrixSelectedCategory
+    ? ' <b>' + escHTML(state.categoryMatrixSelectedCategory) + '</b> is selected, so region columns are ranked highest to lowest by its ' + escHTML(metricLabel.toLowerCase()) + ' time. Click the selected category again to clear it.'
+    : ' Click a category name to rank the region columns by that category&apos;s ' + escHTML(metricLabel.toLowerCase()) + ' time.';
   const categoryRegionSection = '<div class="chart-grid qb-category-region"><div class="chart-card full">' +
     '<h3>Shipment, ticket and time · Category × Region</h3>' +
-    '<div class="note">Each cell shows distinct shipments, tickets, then the selected ' + escHTML(metricLabel.toLowerCase()) + ' time. Category time uses each shipment&apos;s ticket time in that category. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region and all selected shipment time. This view follows the current Shipment Analysis scope and table filters.</div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Category</th>' +
-      categoryRegions.map(region => '<th class="num">' + escHTML(region) + '</th>').join('') +
-      '<th class="num">Total</th></tr></thead><tbody>' +
-      (categoryRegionRows.map(row => '<tr><td><b>' + escHTML(row.category) + '</b></td>' +
+    '<div class="note">Each cell shows distinct shipments, tickets, then the selected ' + escHTML(metricLabel.toLowerCase()) + ' time. Click <b>Category</b> to rank categories across all regions, or click an individual <b>region name</b> to rank categories within that region. Click again to reverse the order.' + selectedCategoryNote + ' Category time uses each shipment&apos;s ticket time in that category. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region and all selected shipment time. This view follows the current Shipment Analysis scope and table filters.</div>' +
+    '<div class="tbl-wrap"><table class="gtable">' + categoryRegionHeaders + '<tbody>' +
+      (categoryRegionRows.map(row => {
+        const isSelected = state.categoryMatrixSelectedCategory === row.category;
+        return '<tr><td' + (isSelected ? ' data-qb-control="matrix-category-select"' : '') + '><button type="button" class="qb-matrix-category-button ' +
+          (isSelected ? 'active' : '') + '" onclick="quickBookingCategoryMatrixSelect(' + attr(JSON.stringify(row.category)) + ')" ' +
+          'aria-pressed="' + (isSelected ? 'true' : 'false') + '" aria-label="' + (isSelected ? 'Clear' : 'Select') + ' category ' + attr(row.category) + ' to rank regions by time"><b>' + escHTML(row.category) + '</b>' +
+          (isSelected ? '<span class="qb-matrix-sort-arrow" aria-hidden="true">&#9660;</span>' : '') + '</button></td>' +
         categoryRegions.map(region => {
           const cell = row.byRegion.get(region);
           return categoryVolumeCell(cell);
         }).join('') +
-        categoryVolumeCell(row.total) + '</tr>').join('') ||
+        categoryVolumeCell(row.total) + '</tr>';
+      }).join('') ||
         '<tr><td colspan="' + (categoryRegions.length + 2) + '" style="color:var(--text3)">No shipment categories match the current filters.</td></tr>') +
       '</tbody><tfoot><tr><td><b>Total</b></td>' +
         categoryRegions.map(region => {
