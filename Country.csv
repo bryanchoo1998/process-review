@@ -1,0 +1,534 @@
+﻿Assignment Group,Product,Division,Finance / Ops,Country,Region,Manager,Team Leader,Business Unit,FTE Region,FTE Country
+GBS - GL - OPERATIONS 3,R&C - Groceries,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Premela,R&C - Groceries,ANZ,AU
+GBS - GL - OPERATIONS 1,R&I,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Rusitra,R&I,ANZ,AU
+GBS - GL - OPERATIONS 4,Control Tower,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Vivien Mekea,Control Tower,ANZ,AU
+GBS - GL - PROCUREMENT,Procurement Admin,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Vivien Mekea,Procurement Admin,ANZ,AU
+GBS - GL - OPERATIONS 2,R&C - Beverages,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Vivien Mekea,R&C - Beverages,ANZ,AU
+GBS - GL - OPERATIONS 5,Admin,GL,OPS,AU,ANZ,Agalyarani Ganaisen,Premela,Admin,ANZ,AU
+GBS - GF -  DK - MILE SCHED - IMP & EXP SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF -  FI - MILE SCHED - IMP SEA,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF -  NB - EXP SEA,SEA EXPORT,GF,OPS,CN,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,NB
+GBS - GF - AMS TRANSSHIP UPD - NL - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - ARN- EMEA - IRRELEVANT,SEA IMPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,EMEA
+GBS - GF - ARN- NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,NL
+GBS - GF - ARN- SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,SE
+GBS - GF - ARN- UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,UK
+GBS - GF - BT & ST JOB INV  ENTRY- AU - CUSTOMS,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - ADL,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - BNE,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - MEL,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - NIKE,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - SYD,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - SYD - PAN,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - SYD - TJX,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - BT JOB REG - AU - CUSTOMS - TP,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - BT JOB REG - DE - CUSTOMS,CUSTOMS,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - BT JOB REG - NL - CUSTOMS,CUSTOMS,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - CANVAL - EMEA - IMPORT SEA,SEA IMPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,EMEA
+GBS - GF - CTO - DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - CTO - NL - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - CTO - UK - IMPORT AIR,AIR IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - CTO & OUTTURN- DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - CUSTOM E-DOCS - DE - CUSTOMS,CUSTOMS,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - CUSTOM E-DOCS - IT - CUSTOMS,CUSTOMS,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - DE  - EXPORT SEA EDOC,SEA EXPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - DHR E13- DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - DHR E13- DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - DHR E13- FI - IMPORT SEA,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF - DHR E13- GZ - IMPORT SEA,SEA IMPORT,GF,OPS,CN,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,CN
+GBS - GF - DHR E13- HK - IMPORT SEA,SEA IMPORT,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,HK
+GBS - GF - DHR E13- IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - DHR E13- NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - DHR E13- SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - DHR E13- SG - IMPORT SEA,SEA IMPORT,GF,OPS,SG,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,ASEAN & ISC,SG
+GBS - GF - EMEA - CS TO CHECK,SEA IMPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,EMEA
+GBS - GF - FI - IMPORT SEA ,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,FI
+GBS - GF - GATE IN DATE (E5)- DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - GATE IN DATE (E5)- SG - IMPORT SEA,SEA IMPORT,GF,OPS,SG,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,ASEAN & ISC,SG
+GBS - GF - GOU - DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - GOU - DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - GOU - EMEA - IMPORT SEA,SEA IMPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,EMEA
+GBS - GF - GOU - FI - IMPORT SEA,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF - GOU - IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - GOU - NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - GOU - SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - GOU - UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - HK - MILE SCHED - EXP SEA & HKG SEAMASTER,SEA EXPORT,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,HK
+GBS - GF - IRP E3 - DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - JOB PROFITABILITY - CA - REPORT,Customer Service,GF,OPS,CA,NAM,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,NAM,CA
+GBS - GF - JOB PROFITABILITY - US - REPORT,Customer Service,GF,OPS,US,NAM,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,NAM,US
+GBS - GF - JOB VAL RPT - EMEA,Customer Service,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,EMEA
+GBS - GF - KOGAN E-DOCS - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Meheswaren ,GF,ANZ,AU
+GBS - GF - MDP - CUSTOMS A,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - MDP - CUSTOMS B,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - MILE E10 POD- HK - IMPORT SEA,SEA IMPORT,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,HK
+GBS - GF - MILE E6 E8 (ATD & ATA) - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Meheswaren ,GF,ANZ,AU
+GBS - GF - MILE E6 E8 (ATD & ATA) - DE - EXPORT AIR,AIR EXPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - MILE E6 E8 (ATD & ATA) - DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - MILE E6 E8 (ATD & ATA) - DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - MILE E6 E8 (ATD & ATA) - DK - EXPORT AIR,AIR EXPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - MILE E6 E8 (ATD & ATA) - DK - IMPORT AIR,AIR IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - MILE E6 E8 (ATD & ATA) - DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - MILE E6 E8 (ATD & ATA) - FI - EXPORT AIR,AIR EXPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF - MILE E6 E8 (ATD & ATA) - FI - IMPORT AIR,AIR IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - IMPORT SEA,SEA IMPORT,GF,OPS,CN,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,CN
+GBS - GF - MILE E6 E8 (ATD & ATA) - HK - EXPORT SEA,SEA EXPORT,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,HK
+GBS - GF - MILE E6 E8 (ATD & ATA) - HK - IMPORT SEA,SEA IMPORT,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,HK
+GBS - GF - MILE E6 E8 (ATD & ATA) - IT - EXPORT AIR,AIR EXPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - MILE E6 E8 (ATD & ATA) - IT - IMPORT AIR,AIR IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - MILE E6 E8 (ATD & ATA) - IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - MILE E6 E8 (ATD & ATA) - NL - EXPORT AIR,AIR EXPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - MILE E6 E8 (ATD & ATA) - NL - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - MILE E6 E8 (ATD & ATA) - NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - EXPORT AIR,AIR EXPORT,GF,OPS,NZ,ANZ,Heme Sarawanan Durairaj,Meheswaren ,GF,ANZ,NZ
+GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - IMPORT AIR,AIR IMPORT,GF,OPS,NZ,ANZ,Heme Sarawanan Durairaj,Meheswaren ,GF,ANZ,NZ
+GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Heme Sarawanan Durairaj,Meheswaren ,GF,ANZ,NZ
+GBS - GF - MILE E6 E8 (ATD & ATA) - SE - EXPORT AIR,AIR EXPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - MILE E6 E8 (ATD & ATA) - SE - IMPORT AIR,AIR IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - MILE E6 E8 (ATD & ATA) - SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - MILE E6 E8 (ATD & ATA) - SG - EXPORT SEA,SEA EXPORT,GF,OPS,SG,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,ASEAN & ISC,SG
+GBS - GF - MILE E6 E8 (ATD & ATA) - SG - IMPORT SEA,SEA IMPORT,GF,OPS,SG,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,ASEAN & ISC,SG
+GBS - GF - MILE E6 E8 (ATD & ATA) - TW - EXPORT SEA,SEA EXPORT,GF,OPS,TW,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,TW
+GBS - GF - MILE E6 E8 (ATD & ATA) - UK - EXPORT AIR,AIR EXPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - MILE E6 E8 (ATD & ATA) - UK - IMPORT AIR,AIR IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - MILE E6 E8 (ATD & ATA) - UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - MILESTONE - AUTOMATION -SEA,SEA IMPORT,GF,OPS,Division,Division,Heme Sarawanan Durairaj,Meheswaren ,GF,Division,Division
+GBS - GF - MST WAREHOUSE MST UPD - NL - ROAD,Warehouse,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - NIKE BOX - CUSTOMS A,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - NL - MILE SCHED - AMS TSP UPDATE AIR,AIR EXPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - NRA PROCESS- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,NAM,US
+GBS - GF - OUTTURN- DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - PO GEBHEIHAM - DE - CUST SERV,Customer Service,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DE
+GBS - GF - POD E10- NL  - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - POD E10- NL - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - POD E10- SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - POD E10- UK - IMPORT AIR,AIR IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - POD E10- ZA - IMPORT AIR,AIR IMPORT,GF,OPS,ZA,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,ZA
+GBS - GF - PREPARING CUSTOMS FORM- HK - AIR,CUSTOMS,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,NAS,HK
+GBS - GF - PREPARING CUSTOMS FORM- HK - SEA,CUSTOMS,GF,OPS,HK,ASIA,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,NAS,HK
+GBS - GF - REG - DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DE
+GBS - GF - REG - DE - IMPORT SEA/ROA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DE
+GBS - GF - REG - DE - ROAD,Warehouse,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - REG - DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DK
+GBS - GF - REG - IT - IMPORT AIR,AIR IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,IT
+GBS - GF - REG - IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,IT
+GBS - GF - REG - NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,NL
+GBS - GF - REG - SE - IMPORT AIR,AIR IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,SE
+GBS - GF - REG - SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,SE
+GBS - GF - REG - SG - CUSTOMS,CUSTOMS,GF,OPS,SG,ASIA,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ASEAN & ISC,SG
+GBS - GF - REG - UK - CUSTOMS,CUSTOMS,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - REG - UK - IMPORT SEA/AIR,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,UK
+GBS - GF - REG - UK UNIQUE - IMPORT SEA/AIR,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,UK
+GBS - GF - STJOB PRO - AU - CUSTOMS - ADL,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - STJOB PRO - AU - CUSTOMS - BNE,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - STJOB PRO - AU - CUSTOMS - EXP,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla  / Nurkafizah ,GF,ANZ,AU
+GBS - GF - STJOB PRO - AU - CUSTOMS - MEL,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Anis Nabilla ,GF,ANZ,AU
+GBS - GF - STJOB PRO - AU - CUSTOMS - SYD,CUSTOMS,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Nurkafizah Haron ,GF,ANZ,AU
+GBS - GF - TJX CHAFTA REPORT - AU,Customer Service,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,ANZ,AU
+GBS - GF - TJXDOC - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,ANZ,AU
+GBS - GF - TRS - DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - TRS - DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DK
+GBS - GF - TRS - EMEA SEA,SEA EXPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,EMEA
+GBS - GF - TRS - FI - IMPORT SEA,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,FI
+GBS - GF - TRS - IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,IT
+GBS - GF - TRS - NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,NL
+GBS - GF - TRS - SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,SE
+GBS - GF - TRS - UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,UK
+GBS - GF - TW - MILE SCHED - IMP & EXP AIR,SEA IMPORT,GF,OPS,TW,ASIA,Heme Sarawanan Durairaj,Meheswaren ,GF,NAS,TW
+GBS - GF - US - MILE SCHED - E3 AIR,AIR EXPORT,GF,OPS,US,NAM,Heme Sarawanan Durairaj,Meheswaren ,GF,NAM,US
+GBS - GF - VAL - BE - IMPORT AIR,AIR IMPORT,GF,OPS,BE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,BE
+GBS - GF - VAL - BE - IMPORT SEA,SEA IMPORT,GF,OPS,BE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,BE
+GBS - GF - VAL - DE - IMPORT AIR,AIR IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DE
+GBS - GF - VAL - DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DE
+GBS - GF - VAL - DK - IMPORT AIR,AIR IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DK
+GBS - GF - VAL - DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,DK
+GBS - GF - VAL - FI - IMPORT AIR,AIR IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,FI
+GBS - GF - VAL - FI - IMPORT SEA,SEA IMPORT,GF,OPS,FI,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,FI
+GBS - GF - VAL - IT - IMPORT AIR,AIR IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,IT
+GBS - GF - VAL - IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,IT
+GBS - GF - VAL - NL - IMPORT AIR,AIR IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,NL
+GBS - GF - VAL - NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,NL
+GBS - GF - VAL - PL - IMPORT AIR,AIR IMPORT,GF,OPS,PL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,PL
+GBS - GF - VAL - PL - IMPORT SEA,SEA IMPORT,GF,OPS,PL,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,PL
+GBS - GF - VAL - SE - IMPORT AIR,AIR IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,SE
+GBS - GF - VAL - SE - IMPORT SEA,SEA IMPORT,GF,OPS,SE,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,SE
+GBS - GF - VAL - UK - IMPORT AIR,AIR IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,UK
+GBS - GF - VAL - UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,UK
+GBS - GF - VAL RPT - EMEA,SEA IMPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Heme Sarawanan Durairaj,GF,EMEA,EMEA
+GBS - GF - FINAL HBL RELEASE- HAN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - HBL - HAN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - MBL- HAN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - QBOOK CONSOL - HAN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - CONSOL HBL - NB - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Teo Siew Wen,GF,NAS,NB
+GBS - GF - CONSOL- SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - FINAL HBL RELEASE- SGN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - FINAL HBL RELEASE- SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - HBL - HK - EXPORT SEA,SEA EXPORT,GF,OPS,HK,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,HK
+GBS - GF - HBL - NB - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Teo Siew Wen,GF,NAS,NB
+GBS - GF - HBL - SGN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - HBL - SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - HBL - SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - HBL - TH - EXPORT SEA,SEA EXPORT,GF,OPS,TH,ASIA,Irene Ong,Teo Siew Wen,GF,ASEAN & ISC,TH
+GBS - GF - HBL - TW - EXPORT SEA,SEA EXPORT,GF,OPS,TW,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,TW
+GBS - GF - MBL- SGN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - MBL- SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - MBL- SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - MBL- TH - EXPORT SEA,SEA EXPORT,GF,OPS,TH,ASIA,Irene Ong,Teo Siew Wen,GF,ASEAN & ISC,TH
+GBS - GF - MBL- TW - EXPORT SEA,SEA EXPORT,GF,OPS,TW,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,TW
+GBS - GF – OCEAN DOCS - AU - EXPORT SEA,SEA EXPORT,GF,OPS,AU,ANZ,Irene Ong,Teo Siew Wen,GF,ANZ,AU
+GBS - GF - OCEAN DOCS - EMEA - EXPORT SEA,SEA EXPORT,GF,OPS,EMEA,EMEA,Irene Ong,Teo Siew Wen,GF,EMEA,EMEA
+GBS - GF - OPS - EMEA - EXPORT SEA,SEA EXPORT,GF,OPS,EMEA,EMEA,Irene Ong,Teo Siew Wen,GF,EMEA,EMEA
+GBS - GF - OPS - JP - EXPORT SEA,SEA EXPORT,GF,OPS,JP,ASIA,Irene Ong,Saravanan Govindan,GF,JP,JP
+GBS - GF - OPS - KR - EXPORT SEA,SEA EXPORT,GF,OPS,KR,ASIA,Irene Ong,Saravanan Govindan,GF,KR,KR
+GBS - GF - OPS - SH - EXPORT SEA - SAT,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - OPS - SH - EXPORT SEA - TTI,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - PA NON TOLL DEST AG - SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - PA NON TOLL DEST AG - SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - QBOOK - NB - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Teo Siew Wen,GF,NAS,NB
+GBS - GF - QBOOK - SG - EXPORT SEA,SEA EXPORT,GF,OPS,SG,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,SG
+GBS - GF - QBOOK - SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - QBOOK CONSOL - AU - EXPORT SEA,SEA EXPORT,GF,OPS,AU,ANZ,Irene Ong,Teo Siew Wen,GF,ANZ,AU
+GBS - GF - QBOOK CONSOL - HK - EXPORT SEA,SEA EXPORT,GF,OPS,HK,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,HK
+GBS - GF - QBOOK CONSOL - SGN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - QBOOK CONSOL - SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - QBOOK CONSOL - TW - EXPORT SEA,SEA EXPORT,GF,OPS,TW,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,TW
+GBS - GF - SAILING SCHED- HK - EXPORT SEA,SEA EXPORT,GF,OPS,HK,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,HK
+GBS - GF - SHIP INST - HAN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - SHIP INST - HK - EXPORT SEA,SEA EXPORT,GF,OPS,HK,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,HK
+GBS - GF - SHIP INST - SGN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Irene Ong,Saravanan Govindan,GF,ASEAN & ISC,VN
+GBS - GF - SHIP INST - SH - EXPORT SEA - AME,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - SHIP INST - SH - EXPORT SEA - ANZ,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Joel Chuah,GF,NAS,SH
+GBS - GF - SHIP INST - SZ - EXPORT SEA - P1,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - SHIP INST - SZ - EXPORT SEA - P2,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - SHIP INST - SZ - EXPORT SEA - P3,SEA EXPORT,GF,OPS,CN,ASIA,Irene Ong,Sammie Yeoh,GF,NAS,SZ
+GBS - GF - SHIP INST - TH - EXPORT SEA,SEA EXPORT,GF,OPS,TH,ASIA,Irene Ong,Teo Siew Wen,GF,ASEAN & ISC,TH
+GBS - GF - SHIP INST - TW - EXPORT SEA,SEA EXPORT,GF,OPS,TW,ASIA,Irene Ong,Saravanan Govindan,GF,NAS,TW
+ASIA-GBS-Malaysia,Others,Others,Others,,,Kaveeshaanthini Gobalan,,,,
+GBS - FN - GF - AU - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - MY - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - CN - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - HK - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - NZ - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - PH - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - TW - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - LK - AP INV B,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - SGF XM - AP INV,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Jia Hua,,,
+GBS - FN - GF - ZA - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - SG - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - NZ - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - ID - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - UK - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - DK - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - HK - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - MY - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - PH - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - SE - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - AU - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - COE - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - VN - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - US - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - PL - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - CN - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - FI - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - SH - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - TW - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - DE - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - UAE - AP PAY,AP Payment,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Kaviarasan,,,
+GBS - FN - GF - UK - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - ID - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - SE - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - US - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - SG - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - DE - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - ZA - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - IN - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - DK - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - UAE - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - NL - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - VN - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - AU - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - PL - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - BD - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - FI - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - CA - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GF - MY - AP INV A,Vendor Invoice Processing,GF,FN,,,Mohamad Saiful Idham Awang Mat Isa,Muhammad Faidhi,,,
+GBS - FN - GLB IC - SE,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - PL,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - FI,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - DK,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - AU,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - BE,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - US,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - SG,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - HK SEA,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - VN,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - TH,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - NL,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - UAE,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - TW,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - UK GF,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - SH,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - SQ,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - ZA,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - SH SEA,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - IT,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - DE,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - BD,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - MY,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - KR,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - PH,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - LK,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - NZ,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - IN,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - ID,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - HK BAL,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - CA,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - UK,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - HK,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - FN - GLB IC - AU GL,,FN,FN,,,Mohd Hazwan Shafei,Mohd Hazwan Shafei,,,
+GBS - GF - BT JOB REG - US - CUSTOMS,CUSTOMS,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - AR MDM- Global - MDM,MDM,GF,OPS,Division,Division,Nur Idayu Zakaria,Tham Jia Yi,GF,Division,Division
+GBS - GF - ARN- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - CAV E9- CA - IMPORT SEA,SEA IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - PO RECON TTI - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - AP MDM- Global - MDM,MDM,GF,OPS,Division,Division,Nur Idayu Zakaria,Tham Jia Yi,GF,Division,Division
+GBS - GF - EMERSON BOOK - GLOBAL,SEA EXPORT,GF,OPS,Division,Division,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,Division,Division
+GBS - GF - IRP E3- VN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,VN
+GBS - GF - SHIPMENT PROFILE REPORT- US,Customer Service,GF,OPS,US,NAM,Nur Idayu Zakaria,Tham Jia Yi,GF,NAM,US
+GBS - GF - ORGANIZATION CODE VAL - GLOBAL,MDM,GF,OPS,Division,Division,Nur Idayu Zakaria,Tham Jia Yi,GF,Division,Division
+GBS - GF - PO APPROVAL- NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - SSCOCEAN,SEA EXPORT,GF,OPS,Division,Division,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,Division,Division
+GBS - GF - DOC MGT - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - TJX DOC E-DOCS- AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - DOCS  ADIDAS - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - PO RECON ADIDAS - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - BT REG ADIDAS- NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - PO RECON KOGAN - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - MILE E6 E8 (ATD & ATA) - TW - IMPORT AIR,AIR IMPORT,GF,OPS,TW,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,TW
+GBS - GF - MILE E6 E8 (ATD & ATA) - TW - EXPORT AIR,AIR EXPORT,GF,OPS,TW,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,TW
+GBS - GF - MILE E6 E8 (ATD & ATA) - SG - EXPORT AIR,AIR EXPORT,GF,OPS,SG,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,SG
+GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - EXPORT AIR,AIR EXPORT,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,CN
+GBS - GF - MILE E6 E8 (ATD & ATA) - SH - EXPORT AIR,AIR EXPORT,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,CN
+GBS - GF - NINE WEST JONES- CN - CUST SERV,Customer Service,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Muhammad Affendi,GF,NAS,CN
+GBS - GF - IMP AUTO - IN - CUST SERV,Customer Service,GF,OPS,IN,ASIA,Nur Idayu Zakaria,Muhammad Affendi,GF,ASEAN & ISC,IN
+GBS - GF - PO RECON - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - CAV E9- NL - IMPORT SEA,SEA IMPORT,GF,OPS,NL,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,NL
+GBS - GF - CAV E9- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - CAV E9- UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,UK
+GBS - GF - MILE E6 E8 (ATD & ATA) - AU - EXPORT AIR,AIR EXPORT,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ANZ,AU
+GBS - GF - MILE E6 E8 (ATD & ATA) - HK - EXPORT AIR,AIR EXPORT,GF,OPS,HK,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,HK
+GBS - GF - CHASSING DOC - CA - EXPORT SEA,SEA EXPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - CHASSING DOC - CA - IMPORT SEA,SEA IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - CHASSING DOC - US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - CAV E9- DK - IMPORT SEA,SEA IMPORT,GF,OPS,DK,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,DK
+GBS - GF - CHASSING DOC - US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - IRP E3- HK - EXPORT AIR,AIR EXPORT,GF,OPS,HK,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,HK
+GBS - GF - CAV E9- IT - IMPORT SEA,SEA IMPORT,GF,OPS,IT,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,IT
+GBS - GF - CAV E9- DE - IMPORT SEA,SEA IMPORT,GF,OPS,DE,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,DE
+GBS - GF - COI REPORT- US - ROAD,Warehouse,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - CLIENT RATE- US - POST SALES,MDM,GF,OPS,US,NAM,Nur Idayu Zakaria,Tham Jia Yi,GF,NAM,US
+GBS - GF - PO MANAGEMENT- CUST SERV,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Muhammad Affendi,GF,Division,Division
+GBS - GF - BT REG ADIDAS- AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - PO RECON TTI - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - DHR E13- CA - IMPORT SEA,SEA IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - DOC MGT - US - CUST SERV,Customer Service,GF,OPS,US,NAM,Nur Idayu Zakaria,Muhammad Affendi,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - IMPORT AIR,AIR IMPORT,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,CN
+GBS - GF - QUOTATION- NZ - CLIENTS RATES,MDM,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Tham Jia Yi,GF,ANZ,NZ
+GBS - GF - DOC MGT - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - DEP ARV SOB- VN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,VN
+GBS - GF - GIN E5- VN - EXPORT SEA,SEA EXPORT,GF,OPS,VN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,VN
+GBS - GF - DHR E13- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - PO RECON - CUST SERV,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Muhammad Affendi,GF,Division,Division
+GBS - GF - SALES FORCE- GLOBAL - POST SALES,MDM,GF,OPS,Division,Division,Nur Idayu Zakaria,Tham Jia Yi,GF,Division,Division
+GBS - GF - PO RECON - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - DEP ARV SOB- SH - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,SH
+GBS - GF - PVH - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - PO RECON ADIDAS - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - DOCS ADIDAS - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - DEP ARV SOB- SZ - EXPORT SEA,SEA EXPORT,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,SZ
+GBS - GF - GIN E5- US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - EMERSON MILE- GLOBAL,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,Division,Division
+GBS - GF - MILE E6 E8 (ATD & ATA) - HK - IMPORT AIR,AIR IMPORT,GF,OPS,HK,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAS,HK
+GBS - GF - GOU- CA - IMPORT SEA,SEA IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - GOU- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - IRP E3- CA - EXPORT AIR,AIR EXPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - MILE E6 E8 (ATD & ATA) - SG - IMPORT AIR,AIR IMPORT,GF,OPS,SG,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,SG
+GBS - GF - IRP E3- US - EXPORT AIR,AIR EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - IRP E3- US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - AU - IMPORT AIR,AIR IMPORT,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ANZ,AU
+GBS - GF - DHR E13- UK - IMPORT SEA,SEA IMPORT,GF,OPS,UK,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,UK
+GBS - GF - MILE A&F- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - CA - EXPORT AIR,AIR EXPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - MILE E6 E8 (ATD & ATA) - CA - EXPORT SEA,SEA EXPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - MILE E6 E8 (ATD & ATA) - CA - IMPORT AIR,AIR IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - MILE E6 E8 (ATD & ATA) - CA - IMPORT SEA,SEA IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - MILE E6 E8 (ATD & ATA) - US - EXPORT AIR,AIR EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - US - IMPORT AIR,AIR IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE E6 E8 (ATD & ATA) - US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - MILE VSCO- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - POD E10- US - IMPORT AIR,AIR IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - POD E10- US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - QBOOK - US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - REG - CA - IMPORT AIR,AIR IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - PO RECON MD STAR - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - TEMPERZONE - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - CLIENT RATE- CLIENTS RATES,MDM,GF,OPS,Division,Division,Nur Idayu Zakaria,Tham Jia Yi,GF,Division,Division
+GBS - GF - PO CREATION - NZ - CUST SERV,Customer Service,GF,OPS,NZ,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,NZ
+GBS - GF - PVH- HK - CUST SERV,Customer Service,GF,OPS,HK,ASIA,Nur Idayu Zakaria,Muhammad Affendi,GF,NAS,HK
+GBS - GF - ADIDAS FCX CONSOLIDATION - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - VAT- CN - POST SALES,Customer Service,GF,OPS,CN,ASIA,Nur Idayu Zakaria,Muhammad Affendi,GF,NAS,CN
+GBS - GF - REG - US - IMPORT AIR,AIR IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - TEMPERZONE - AU - CUST SERV,Customer Service,GF,OPS,AU,ANZ,Nur Idayu Zakaria,Muhammad Affendi,GF,ANZ,AU
+GBS - GF - GP MARGIN RPT- GLOBAL - REPORT,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,Division,Division
+GBS - GF - EMERSON RATE EXCHANGE- GLOBAL,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,Division,Division
+GBS - GF - SAILING SCHED- US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - REG - SG - IMPORT AIR,AIR IMPORT,GF,OPS,SG,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,SG
+GBS - GF - TRS - US - EXPORT SEA,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - VAL - SG - IMPORT AIR,AIR IMPORT,GF,OPS,SG,ASIA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,ASEAN & ISC,SG
+GBS - GF - VAL - CA - IMPORT AIR,AIR IMPORT,GF,OPS,CA,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,CA
+GBS - GF - VAL - US - IMPORT AIR,AIR IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - VAL - US - IMPORT SEA,SEA IMPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - GBSPEN.CSOPS,Customer Service,GF,OPS,Division,Division,Nur Idayu Zakaria,Muhammad Affendi,GF,Division,Division
+GBS - GF - HALLMARK RECON- NL - CUST SERV,Customer Service,GF,OPS,NL,EMEA,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,EMEA,NL
+GBS - GF - Wharf Gate Out - US - Milestone,SEA EXPORT,GF,OPS,US,NAM,Nur Idayu Zakaria,Anas Mushrif / Santhini Subramaniam,GF,NAM,US
+GBS - GF - PREPARING CUSTOMS FORM- MY,CUSTOMS,GF,OPS,MY,ASIA,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ASEAN & ISC,MY
+GBS - GF - BT & ST JOB INV ENTRY- NZ - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS – GF – INV – CN BILLING,Invoicing,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,NAS,CN
+GBS - GF - MY - BT JOB REG - CUSTOMS,CUSTOMS,GF,OPS,MY,ASIA,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ASEAN & ISC,MY
+GBS - GF - ARN- AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - FC - CN SH,Freight Costing ,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAS,CN
+GBS - GF - FC - CN NB,Freight Costing ,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAS,CN
+GBS - GF - VAL - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,NZ
+GBS - GF - FC - CN SZ,Freight Costing ,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAS,CN
+GBS - GF - REG - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,NZ
+GBS - GF - EDO- AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS – GF – INV – MY BILLING,Invoicing,GF,OPS,MY,ASIA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ASEAN & ISC,MY
+GBS - GF - BT JOB REG - NZ - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS – GF – INV – SYD & BNE BILLING,Invoicing,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ANZ,AU
+GBS – GF – INV – MEL BILLING,Invoicing,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ANZ,AU
+GBS - GF - POD - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - EDO - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS – GF – INV – US BILLING,Invoicing,GF,OPS,US,NAM,Nurul Adibah Mohd Yusoff,Mushanafi,GF,NAM,US
+GBS - GF  - FC - KR ACCRUAL,Freight Costing ,GF,OPS,KR,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,KR,KR
+GBS - GF - OUTTURN- AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS – GF – INV – NZ BILLING,Invoicing,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ANZ,NZ
+GBS – GF – INV – SG SEA BILLING,Invoicing,GF,OPS,SG,ASIA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ASEAN & ISC,SG
+GBS - GF - REG - NZ - IMPORT AIR,AIR IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - BT & ST JOB INV  ENTRY- NZ - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - REG - AU - IMPORT AIR,AIR IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - VAL - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - ARN- NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - REG - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - VAL - AU - IMPORT AIR,AIR IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - TRS - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - TAX INV - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - E5 - WHARF GATE - IN DATE - NZ IMPORT,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - NZ - ST JOB PROCESSING - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - FC - CN SZ SIV,Freight Costing ,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAS,CN
+GBS - GF - VAL - NZ - IMPORT AIR,AIR IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - FC - NZ SISTER BILLING,Freight Costing ,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ANZ,NZ
+GBS - GF - EXPORT - NZ - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - REG - KR - IMPORT SEA,SEA IMPORT,GF,OPS,KR,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,KR,KR
+GBS - GF - OUTTURN- NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - BROKERAGE COMPLIANCE - AU - SEA IMPORT,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - REG - SG - IMPORT SEA,SEA IMPORT,GF,OPS,SG,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ASEAN & ISC,SG
+GBS – GF – INV – SG AIR BILLING,Invoicing,GF,OPS,SG,ASIA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,ASEAN & ISC,SG
+GBS - GF - FC - NZ FC,Freight Costing ,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ANZ,NZ
+GBS - GF - FC - NZ INCOMPLETE,Freight Costing ,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ANZ,NZ
+GBS - GF - REG - HK - IMPORT AIR,AIR IMPORT,GF,OPS,HK,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,HK
+GBS - GF - STR - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - GATE IN DATE (E5)- NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - BLANK BILLING - NZ - SEA IMPORT,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - BLANK BILLING - NZ - AIR IMPORT,AIR IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - E10 - DELIVERY DATE IF IMPORT BROKER IS TOLL - NZ IMPORT,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - GTP E-DOCS - AU- IMPORT AIR,AIR IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - SCAC - AU - SEA IMPORT,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - TRS - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ANZ,AU
+GBS - GF - FC - AU ACCRUAL,Freight Costing ,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ANZ,AU
+GBS - GF - FREIGHT COST - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada ,GF,ANZ,NZ
+GBS - GF - FREIGHT COST - MY - IMPORT SEA,SEA IMPORT,GF,OPS,MY,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ASEAN & ISC,MY
+GBS - GF - FREIGHT COST - CN - IMPORT SEA,SEA IMPORT,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAS,CN
+GBS - GF - CUSTOM E-DOCS - NZ - CUSTOMS,CUSTOMS,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - FREIGHT COST - AU - IMPORT SEA,SEA IMPORT,GF,OPS,AU,ANZ,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ANZ,AU
+GBS - GF - FREIGHT COST - KR - IMPORT SEA,SEA IMPORT,GF,OPS,KR,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,KR,KR
+GBS - GF - VAL - HK - IMPORT AIR,AIR IMPORT,GF,OPS,HK,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,HK
+GBS- GF - POD - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - REG - HK - IMPORT SEA,SEA IMPORT,GF,OPS,HK,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,HK
+GBS - GF - VAL - HK - IMPORT SEA,SEA IMPORT,GF,OPS,HK,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,HK
+GBS – GF – INV – DE BILLING,Invoicing,GF,OPS,DE,EMEA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,EMEA,DE
+GBS - GF - VAL - GZ - IMPORT AIR,AIR IMPORT,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,CN
+GBS - GF - VAL - GZ - IMPORT SEA,SEA IMPORT,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,CN
+GBS - GF - VAL - SG - IMPORT SEA,SEA IMPORT,GF,OPS,SG,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,ASEAN & ISC,SG
+GBS – GF – INV – HKG BILLING,Invoicing,GF,OPS,HK,ASIA,Nurul Adibah Mohd Yusoff,Mushanafi,GF,NAS,HK
+GBS - GF - INTERIM RECEIPT - NZ - IMPORT SEA,SEA IMPORT,GF,OPS,NZ,ANZ,Nurul Adibah Mohd Yusoff,Muhammad Fadli,GF,ANZ,NZ
+GBS - GF - FC - MY ACCRUAL,Freight Costing ,GF,OPS,MY,ASIA,Nurul Adibah Mohd Yusoff,Nursuhada,GF,ASEAN & ISC,MY
+GBS - GF - REG - GZ - IMPORT SEA,SEA IMPORT,GF,OPS,CN,ASIA,Nurul Adibah Mohd Yusoff,Muhunthean,GF,NAS,CN
+GBS - GF - FC - US FEDEX ACCRUAL,Freight Costing ,GF,OPS,US,NAM,Nurul Adibah Mohd Yusoff,Nursuhada,GF,NAM,US
+GBS - FN - GL - SG - AR CASHAPP,AR Cash App,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - SG - AR BILLING,AR Billing,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - AU - AR BILLING,AR Billing,GL,FN,AU,ANZ,Renugadeevi Ramaya,Amirah Abdullah,R&I,ANZ,
+GBS - FN - GF - US - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - PH - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SH - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - KR - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - UK - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - LK - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - IN - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - HK - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - TH - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GL - KR - AR CASHAPP,AR Cash App,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - IND - AR CASHAPP,AR Cash App,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GF - MY - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SE - AR QUERY,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - DE - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - PL - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - IT - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - UAE - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - NL - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GL - MY - AR CASHAPP,AR Cash App,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GF - DK - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - VN - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SG - FX UPDATE,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - ID - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SQ - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - FI - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SE - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - AU - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SG - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - TW - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SG - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - ZA - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - CA - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - HK - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - UK - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - SE - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - PL - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - ZA - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - VN - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - FI - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GL - SG - AR BANKREC,AR Bank Reconciliation,GL,FN,Asia,ASIA,Renugadeevi Ramaya,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GF - DK - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - DE - AR BANKREC,AR Bank Recon,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - CN - AR BILLING,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - NZ - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF -SG - AR EXCH RATE,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - KR - AR RECON,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - DE - AR QUERY,,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - TG- AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+GBS - FN - GF - COE - AR CASHAPP,AR Cashapp,GF,FN,,,Renugadeevi Ramaya,,,,
+Global-ServiceNow-GBS Connect Workspace-TOLL,Others,Others,Others,,,Sahajdeep Singh,,,,
+GBS - FN - GL - IN  - AP PAY,AP Payment,GL,FN,IN,ASIA,Yuen Shih Chong,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - AU  - AP INV,AP Invoice,GL,FN,AU,ANZ,Yuen Shih Chong,Zurina,R&I,ANZ,
+GBS - FN - GL - AU  - AP PAY,AP Payment,GL,FN,AU,ANZ,Yuen Shih Chong,Amirah Abdullah,R&C,ANZ,
+GBS - FN - GL - IN - AP INV,AP Invoice,GL,FN,IN,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
+GBS - FN - GL - SG - AP INV,AP Invoice,GL,FN,SG,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
+GBS - FN - GL - SG  - AP PAY,AP Payment,GL,FN,SG,ASIA,Yuen Shih Chong,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - KR  - AP PAY,AP Payment,GL,FN,KR,ASIA,Yuen Shih Chong,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - MY  - AP PAY,AP Payment,GL,FN,MY,ASIA,Yuen Shih Chong,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - KR  - AP INV,AP Invoice,GL,FN,KR,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
+GBS - FN - GL - VN  - AP PAY,AP Payment,GL,FN,VN,ASIA,Yuen Shih Chong,Amirah Abdullah,GL Asia,ASIA,
+GBS - FN - GL - MY - AP INV,AP Invoice,GL,FN,MY,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
+GBS - FN - GL - VN - AP INV,AP Invoice,GL,FN,VN,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
+GBS - GF - VSL UPDATE - EMEA SEA,SEA EXPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,EMEA
+GBS - GF - WTR & XRAY- DE - EXPORT AIR,AIR EXPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
