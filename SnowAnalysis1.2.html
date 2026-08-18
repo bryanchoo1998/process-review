@@ -4310,8 +4310,19 @@ if (typeof window !== 'undefined') {
   .qb-region-card:hover { border-color: var(--blue); box-shadow: 0 2px 8px rgba(59,113,202,.15); transform: translateY(-1px); }
   .qb-region-card.is-selected { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue), 0 2px 8px rgba(59,113,202,.16); background: #f5f9ff; }
   .qb-region-card:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .qb-region-spread { margin: 9px 0 7px; padding-top: 7px; border-top: 1px solid var(--surface2); }
+  .qb-region-spread-label { font-size: .6rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--text3); }
+  .qb-region-spread-track { position: relative; height: 10px; margin: 6px 2px 5px; border-radius: 99px; background: #dfe9f8; }
+  .qb-region-spread-iqr { position: absolute; top: 2px; height: 6px; border-radius: 99px; background: #5c8fd6; }
+  .qb-region-spread-median { position: absolute; top: -3px; width: 2px; height: 16px; border-radius: 2px; background: #173f7a; transform: translateX(-1px); }
+  .qb-region-spread-values { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; font-size: .59rem; color: var(--text3); }
+  .qb-region-spread-values span:nth-child(2) { text-align: center; color: var(--blue); font-weight: 700; }
+  .qb-region-spread-values span:last-child { text-align: right; }
   .qb-distribution-card { margin-top: 12px; }
   .qb-distribution-card .chart-wrap { height: 310px; }
+  .qb-distribution-control { display: flex; align-items: center; gap: 7px; font-size: .7rem; color: var(--text2); }
+  .qb-distribution-control input { width: 88px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; font: inherit; color: var(--text); }
+  .qb-threshold-result { font-size: .7rem; color: var(--blue); font-weight: 700; }
 
   .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; }
@@ -5614,11 +5625,35 @@ const quickBookingState = {
   filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
   sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total',
-  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', controlFocus: null,
+  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
 let shipmentAnalysisHotspots = null;
 let shipmentDistributionChart = null;
+let shipmentDistributionTimesMinutes = [];
+let shipmentDistributionBands = [];
+const shipmentThresholdOverlayPlugin = {
+  id: 'shipmentThresholdOverlay',
+  beforeDatasetsDraw(chart) {
+    const startIndex = chart.$shipmentThresholdStart;
+    if (startIndex == null || startIndex < 0) return;
+    const bar = chart.getDatasetMeta(0).data[startIndex];
+    if (!bar) return;
+    const { ctx, chartArea } = chart;
+    const startX = Math.max(chartArea.left, bar.x - bar.width / 2);
+    ctx.save();
+    ctx.fillStyle = 'rgba(220,53,69,.10)';
+    ctx.fillRect(startX, chartArea.top, chartArea.right - startX, chartArea.bottom - chartArea.top);
+    ctx.strokeStyle = 'rgba(220,53,69,.75)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(startX, chartArea.top);
+    ctx.lineTo(startX, chartArea.bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
 const descriptionMatchedAnalysisCache = new Map();
 const QUICK_BOOKING_COLS = [
   { key: 'region', label: 'Region', num: false },
@@ -5688,6 +5723,50 @@ function quickBookingRegion(region) {
   renderQuickBookingSection();
 }
 
+function quickBookingDistributionBucketSize(value) {
+  const parsed = Number(value);
+  quickBookingState.distributionBucketSize = Number.isFinite(parsed) && parsed > 0 ? String(parsed) : '';
+  renderQuickBookingSection();
+}
+
+function shipmentThresholdSummary(value) {
+  if (value == null || String(value).trim() === '') return 'Enter a time in minutes.';
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes < 0) return 'Enter a time in minutes.';
+  const total = shipmentDistributionTimesMinutes.length;
+  if (!total) return 'No shipments in the current chart scope.';
+  const count = shipmentDistributionTimesMinutes.filter(timeMinutes => timeMinutes > minutes).length;
+  const share = +(100 * count / total).toFixed(1);
+  return 'More than ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' min: ' +
+    count.toLocaleString() + ' of ' + total.toLocaleString() + ' shipments (' + share + '%).';
+}
+
+function quickBookingDistributionThreshold(value) {
+  // This updates only the result text, so the active input is never replaced
+  // while the user is typing.
+  quickBookingState.distributionThresholdMinutes = value;
+  const result = document.getElementById('shipmentThresholdResult');
+  if (result) result.textContent = shipmentThresholdSummary(value);
+  updateShipmentThresholdVisual();
+}
+
+function updateShipmentThresholdVisual() {
+  if (!shipmentDistributionChart) return;
+  const raw = quickBookingState.distributionThresholdMinutes;
+  const minutes = Number(raw);
+  const hasThreshold = raw != null && String(raw).trim() !== '' && Number.isFinite(minutes) && minutes >= 0;
+  const threshold = quickBookingState.timeUnit === 'minutes' ? minutes : minutes / 60;
+  const startIndex = hasThreshold
+    ? shipmentDistributionBands.findIndex(band => band.high > threshold) : -1;
+  const barDataset = shipmentDistributionChart.data.datasets[0];
+  barDataset.backgroundColor = barDataset.data.map((_, index) => hasThreshold && startIndex >= 0 &&
+    index >= startIndex ? 'rgba(220,53,69,.68)' : 'rgba(59,113,202,.72)');
+  barDataset.borderColor = barDataset.data.map((_, index) => hasThreshold && startIndex >= 0 &&
+    index >= startIndex ? '#dc3545' : '#3b71ca');
+  shipmentDistributionChart.$shipmentThresholdStart = hasThreshold && startIndex >= 0 ? startIndex : null;
+  shipmentDistributionChart.update('none');
+}
+
 function renderShipmentTimeDistribution(items, time) {
   if (shipmentDistributionChart) {
     try { shipmentDistributionChart.destroy(); } catch (_) { /* detached chart */ }
@@ -5699,8 +5778,15 @@ function renderShipmentTimeDistribution(items, time) {
   const suffix = quickBookingState.timeUnit === 'minutes' ? 'm' : 'h';
   const values = items.map(item => Math.max(0, item.total_secs / divisor));
   const max = Math.max(...values);
-  const bandCount = max === 0 ? 1 : Math.min(16, Math.max(6, Math.ceil(Math.sqrt(values.length))));
-  const bandWidth = max === 0 ? 1 : max / bandCount;
+  const requestedWidth = Number(quickBookingState.distributionBucketSize);
+  const hasRequestedWidth = Number.isFinite(requestedWidth) && requestedWidth > 0;
+  // A manual width is honoured up to 60 bands; the cap keeps an accidental
+  // very small input from making the dashboard unreadable or slow.
+  const bandCount = max === 0 ? 1 : hasRequestedWidth
+    ? Math.min(60, Math.max(1, Math.ceil(max / requestedWidth)))
+    : Math.min(16, Math.max(6, Math.ceil(Math.sqrt(values.length))));
+  const bandWidth = max === 0 ? 1 : hasRequestedWidth && bandCount < 60
+    ? requestedWidth : max / bandCount;
   const counts = Array(bandCount).fill(0);
   for (const value of values) {
     const index = max === 0 ? 0 : Math.min(bandCount - 1, Math.floor(value / bandWidth));
@@ -5712,6 +5798,10 @@ function renderShipmentTimeDistribution(items, time) {
     const high = (index + 1) * bandWidth;
     return low.toFixed(precision) + '–' + high.toFixed(precision) + suffix;
   });
+  shipmentDistributionBands = counts.map((_, index) => ({
+    low: index * bandWidth,
+    high: (index + 1) * bandWidth,
+  }));
   const shares = counts.map(count => +(100 * count / values.length).toFixed(1));
   // The second label line makes each band's own share visible without
   // relying on an optional Chart.js data-label plugin.
@@ -5729,6 +5819,7 @@ function renderShipmentTimeDistribution(items, time) {
         { type: 'line', label: 'Cumulative share', data: cumulative, borderColor: '#dc3545', backgroundColor: '#dc3545', tension: .2, pointRadius: 2.5, pointHoverRadius: 4, yAxisID: 'y1' },
       ],
     },
+    plugins: [shipmentThresholdOverlayPlugin],
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -5746,6 +5837,7 @@ function renderShipmentTimeDistribution(items, time) {
       },
     },
   });
+  updateShipmentThresholdVisual();
 }
 
 function quickBookingTimeUnit(unit) {
@@ -5880,9 +5972,35 @@ function renderQuickBookingSection() {
     const mid = Math.floor(ordered.length / 2);
     return time(ordered.length % 2 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2);
   };
+  const regionPercentile = (values, percentile) => {
+    if (!values.length) return null;
+    const ordered = [...values].sort((a, b) => a - b);
+    const position = (ordered.length - 1) * percentile;
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower);
+  };
+  // All region strips share one scale, making their spread directly
+  // comparable. Values are still printed, so the scale never hides detail.
+  const regionSpreadScale = Math.max(1, ...visibleItems.map(item => item.total_secs));
+  const regionSpread = region => {
+    const p25 = regionPercentile(region.values, .25);
+    const median = regionPercentile(region.values, .5);
+    const p75 = regionPercentile(region.values, .75);
+    if (p25 == null || median == null || p75 == null) return '';
+    const left = Math.min(100, 100 * p25 / regionSpreadScale);
+    const right = Math.min(100, 100 * p75 / regionSpreadScale);
+    const middle = Math.min(100, 100 * median / regionSpreadScale);
+    return '<div class="qb-region-spread" title="P25: ' + time(p25) + ' · Median: ' + time(median) + ' · P75: ' + time(p75) + '">' +
+      '<div class="qb-region-spread-label">Time spread · P25 / median / P75</div>' +
+      '<div class="qb-region-spread-track"><span class="qb-region-spread-iqr" style="left:' + left.toFixed(2) + '%;width:' + Math.max(.8, right - left).toFixed(2) + '%"></span>' +
+      '<span class="qb-region-spread-median" style="left:' + middle.toFixed(2) + '%"></span></div>' +
+      '<div class="qb-region-spread-values"><span>P25 ' + time(p25) + '</span><span>Median ' + time(median) + '</span><span>P75 ' + time(p75) + '</span></div></div>';
+  };
   if (state.selectedRegion && !regionTotals.has(state.selectedRegion)) state.selectedRegion = '';
   const distributionItems = state.selectedRegion
     ? visibleItems.filter(item => item.region === state.selectedRegion) : visibleItems;
+  shipmentDistributionTimesMinutes = distributionItems.map(item => Math.max(0, item.total_secs / 60));
   const distributionScope = state.selectedRegion ? 'Region · ' + state.selectedRegion : 'All visible regions';
   const distributionMedian = distributionItems.length
     ? time(medianSecs(distributionItems.map(item => item.total_secs))) : '—';
@@ -5905,6 +6023,7 @@ function renderQuickBookingSection() {
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMedian(r.other_values) + '</div>' +
           '<div class="kpi-sub">median · ' + r.other_shipments + ' shipments</div></div>' +
       '</div>' +
+      regionSpread(r) +
       '<div class="kpi-sub">' + r.shipments.toLocaleString() + ' shipments · ' + r.tickets.toLocaleString() + ' tickets · ' +
         'total: ' + time(r.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
         regionMetric(r.values, r.total_secs, r.shipments) + '</div></button>').join('');
@@ -5913,6 +6032,16 @@ function renderQuickBookingSection() {
     '<div class="note">Bars show each total-time band&apos;s share of shipments (also printed below the band); hover to see the shipment count. The line shows the cumulative share of shipments completed within that band. ' +
     (state.selectedRegion ? 'Click the selected region card again to return to all regions.' : 'Click a region card to filter this chart.') +
     ' · ' + distributionItems.length.toLocaleString() + ' shipments · median ' + distributionMedian + '.</div>' +
+    '<div class="qb-controls" style="margin:0 0 10px"><label class="qb-distribution-control">Bucket size (' +
+      (state.timeUnit === 'minutes' ? 'minutes' : 'hours') + ') <input type="number" min="0.1" step="0.1" inputmode="decimal" ' +
+      'value="' + attr(state.distributionBucketSize) + '" placeholder="Auto" aria-label="Chart bucket size" ' +
+      'onchange="quickBookingDistributionBucketSize(this.value)"></label>' +
+      '<label class="qb-distribution-control">More than (minutes) <input type="number" min="0" step="1" inputmode="decimal" ' +
+      'value="' + attr(state.distributionThresholdMinutes) + '" placeholder="e.g. 60" aria-label="Shipment time threshold in minutes" ' +
+      'oninput="quickBookingDistributionThreshold(this.value)"></label>' +
+      '<output id="shipmentThresholdResult" class="qb-threshold-result" aria-live="polite">' +
+        escHTML(shipmentThresholdSummary(state.distributionThresholdMinutes)) + '</output>' +
+      '<span class="note" style="margin:0">Leave Bucket size blank for automatic bands. A time threshold shades the relevant bands in red.</span></div>' +
     '<div class="chart-wrap"><canvas id="shipmentTimeDistribution"></canvas></div></div></div>';
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
@@ -5944,13 +6073,14 @@ function renderQuickBookingSection() {
   }).join('');
   const dropdownFilter = key => {
     const values = [...new Set(items.map(x => x[key]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
-    return '<select aria-label="Filter ' + (key === 'case_type' ? 'Case' : 'Latest State') + '" data-qb-filter="' + key + '" ' +
+    const filterLabel = key === 'case_type' ? 'Case' : key === 'reason' ? 'Reason' : 'Latest State';
+    return '<select aria-label="Filter ' + filterLabel + '" data-qb-filter="' + key + '" ' +
       'onchange="quickBookingFilter(\'' + key + '\', this.value)" style="width:100%;min-width:110px;font-size:0.7rem;padding:3px 5px">' +
       '<option value="">All</option>' + values.map(v => '<option value="' + attr(v) + '"' +
         (state.filters[key] === v ? ' selected' : '') + '>' + escHTML(v) + '</option>').join('') + '</select>';
   };
   const filters = '<th></th>' + QUICK_BOOKING_COLS.map(c => {
-    if (c.key === 'case_type' || c.key === 'latest_state') {
+    if (c.key === 'case_type' || c.key === 'latest_state' || c.key === 'reason') {
       return '<th class="' + (c.num ? 'num' : '') + '">' + dropdownFilter(c.key) + '</th>';
     }
     return '<th class="' + (c.num ? 'num' : '') + '"><input aria-label="Filter ' + c.label + '" ' +
