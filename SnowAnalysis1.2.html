@@ -4335,6 +4335,7 @@ if (typeof window !== 'undefined') {
   .qb-category-region .volume-cell { min-width: 112px; text-align: center; }
   .qb-category-region .volume-cell b { display: block; color: var(--blue); font-size: .78rem; }
   .qb-category-region .volume-cell span { display: block; margin-top: 1px; color: var(--text3); font-size: .62rem; }
+  .qb-category-region .volume-cell .time { color: var(--text2); font-weight: 700; }
   .qb-category-region .gtable th:first-child { position: sticky; left: 0; z-index: 3; background: var(--surface2); min-width: 190px; }
   .qb-category-region .gtable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; }
   .qb-category-region .gtable tfoot td { background: var(--surface2); border-top: 2px solid var(--border); }
@@ -6103,57 +6104,66 @@ function renderQuickBookingSection() {
 
   // A shipment may carry tickets from more than one category. It counts once
   // per category/region cell, while every matching ticket contributes to the
-  // ticket total shown below it.
+  // ticket and category-allocated time shown below it.
   const categoryRegion = new Map();
   const categoryRegions = [...regionTotals.keys()].sort((a, b) => a.localeCompare(b));
   for (const item of visibleItems) {
     const ticketCountsByCategory = new Map();
     for (const ticket of item.tickets) {
       const category = ticket.category || '(Uncategorised)';
-      ticketCountsByCategory.set(category, (ticketCountsByCategory.get(category) || 0) + 1);
+      const contribution = ticketCountsByCategory.get(category) || { tickets: 0, secs: 0 };
+      contribution.tickets++;
+      contribution.secs += ticket.time_worked || 0;
+      ticketCountsByCategory.set(category, contribution);
     }
-    for (const [category, tickets] of ticketCountsByCategory) {
+    for (const [category, contribution] of ticketCountsByCategory) {
       if (!categoryRegion.has(category)) categoryRegion.set(category, new Map());
       const byRegion = categoryRegion.get(category);
-      const cell = byRegion.get(item.region) || { shipments: 0, tickets: 0 };
+      const cell = byRegion.get(item.region) || { shipments: 0, tickets: 0, total_secs: 0, values: [] };
       cell.shipments++;
-      cell.tickets += tickets;
+      cell.tickets += contribution.tickets;
+      cell.total_secs += contribution.secs;
+      cell.values.push(contribution.secs);
       byRegion.set(item.region, cell);
     }
   }
   const categoryRegionRows = [...categoryRegion.entries()].map(([category, byRegion]) => {
     const total = [...byRegion.values()].reduce((sum, cell) => ({
       shipments: sum.shipments + cell.shipments, tickets: sum.tickets + cell.tickets,
-    }), { shipments: 0, tickets: 0 });
+      total_secs: sum.total_secs + cell.total_secs, values: sum.values.concat(cell.values),
+    }), { shipments: 0, tickets: 0, total_secs: 0, values: [] });
     return { category, byRegion, total };
   }).sort((a, b) => b.total.shipments - a.total.shipments || b.total.tickets - a.total.tickets || a.category.localeCompare(b.category));
   const categoryRegionTotals = {
     shipments: visibleItems.length,
     tickets: visibleItems.reduce((sum, item) => sum + item.ticket_count, 0),
+    total_secs: visibleItems.reduce((sum, item) => sum + item.total_secs, 0),
+    values: visibleItems.map(item => item.total_secs),
   };
+  const categoryVolumeCell = cell => cell
+    ? '<td class="volume-cell"><b>' + cell.shipments.toLocaleString() + ' shipments</b><span>' +
+      cell.tickets.toLocaleString() + ' tickets</span><span class="time">' + escHTML(metricLabel) + ': ' +
+      regionMetric(cell.values, cell.total_secs, cell.shipments) + '</span></td>'
+    : '<td class="volume-cell" style="color:var(--text3)">—</td>';
   const categoryRegionSection = '<div class="chart-grid qb-category-region"><div class="chart-card full">' +
-    '<h3>Shipment and ticket volume · Category × Region</h3>' +
-    '<div class="note">Each cell shows distinct shipments, then tickets. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region. This view follows the current Shipment Analysis scope and table filters.</div>' +
+    '<h3>Shipment, ticket and time · Category × Region</h3>' +
+    '<div class="note">Each cell shows distinct shipments, tickets, then the selected ' + escHTML(metricLabel.toLowerCase()) + ' time. Category time uses each shipment&apos;s ticket time in that category. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region and all selected shipment time. This view follows the current Shipment Analysis scope and table filters.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Category</th>' +
       categoryRegions.map(region => '<th class="num">' + escHTML(region) + '</th>').join('') +
       '<th class="num">Total</th></tr></thead><tbody>' +
       (categoryRegionRows.map(row => '<tr><td><b>' + escHTML(row.category) + '</b></td>' +
         categoryRegions.map(region => {
           const cell = row.byRegion.get(region);
-          return cell ? '<td class="volume-cell"><b>' + cell.shipments.toLocaleString() + ' shipments</b><span>' +
-            cell.tickets.toLocaleString() + ' tickets</span></td>' : '<td class="volume-cell" style="color:var(--text3)">—</td>';
+          return categoryVolumeCell(cell);
         }).join('') +
-        '<td class="volume-cell"><b>' + row.total.shipments.toLocaleString() + ' shipments</b><span>' +
-          row.total.tickets.toLocaleString() + ' tickets</span></td></tr>').join('') ||
+        categoryVolumeCell(row.total) + '</tr>').join('') ||
         '<tr><td colspan="' + (categoryRegions.length + 2) + '" style="color:var(--text3)">No shipment categories match the current filters.</td></tr>') +
       '</tbody><tfoot><tr><td><b>Total</b></td>' +
         categoryRegions.map(region => {
-          const total = regionTotals.get(region) || { shipments: 0, tickets: 0 };
-          return '<td class="volume-cell"><b>' + total.shipments.toLocaleString() + ' shipments</b><span>' +
-            total.tickets.toLocaleString() + ' tickets</span></td>';
+          const total = regionTotals.get(region) || { shipments: 0, tickets: 0, total_secs: 0, values: [] };
+          return categoryVolumeCell(total);
         }).join('') +
-        '<td class="volume-cell"><b>' + categoryRegionTotals.shipments.toLocaleString() + ' shipments</b><span>' +
-          categoryRegionTotals.tickets.toLocaleString() + ' tickets</span></td></tr></tfoot></table></div></div></div>';
+        categoryVolumeCell(categoryRegionTotals) + '</tr></tfoot></table></div></div></div>';
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
   if (state.page > totalPages) state.page = totalPages;
