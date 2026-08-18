@@ -4323,6 +4323,14 @@ if (typeof window !== 'undefined') {
   .qb-distribution-control { display: flex; align-items: center; gap: 7px; font-size: .7rem; color: var(--text2); }
   .qb-distribution-control input { width: 88px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; font: inherit; color: var(--text); }
   .qb-threshold-result { font-size: .7rem; color: var(--blue); font-weight: 700; }
+  .qb-threshold-matrix { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .qb-threshold-matrix h4 { font-size: .74rem; color: var(--text2); margin-bottom: 3px; }
+  .qb-threshold-matrix .note { margin-bottom: 7px; }
+  .qb-threshold-matrix table { min-width: max-content; }
+  .qb-threshold-matrix th, .qb-threshold-matrix td { min-width: 118px; text-align: center !important; }
+  .qb-threshold-matrix td:first-child, .qb-threshold-matrix th:first-child { position: sticky; left: 0; z-index: 1; min-width: 96px; text-align: left !important; background: var(--surface); }
+  .qb-threshold-matrix td .count { display: block; font-size: .82rem; font-weight: 700; }
+  .qb-threshold-matrix td .share { display: block; font-size: .63rem; margin-top: 1px; }
 
   .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; }
@@ -5632,6 +5640,7 @@ let shipmentAnalysisHotspots = null;
 let shipmentDistributionChart = null;
 let shipmentDistributionTimesMinutes = [];
 let shipmentDistributionBands = [];
+let shipmentDistributionByRegion = [];
 const shipmentThresholdOverlayPlugin = {
   id: 'shipmentThresholdOverlay',
   beforeDatasetsDraw(chart) {
@@ -5748,6 +5757,41 @@ function quickBookingDistributionThreshold(value) {
   const result = document.getElementById('shipmentThresholdResult');
   if (result) result.textContent = shipmentThresholdSummary(value);
   updateShipmentThresholdVisual();
+  updateShipmentThresholdMatrix();
+}
+
+function updateShipmentThresholdMatrix() {
+  const root = document.getElementById('shipmentThresholdMatrix');
+  if (!root) return;
+  const raw = quickBookingState.distributionThresholdMinutes;
+  if (raw == null || String(raw).trim() === '' || !Number.isFinite(Number(raw)) || Number(raw) < 0) {
+    root.innerHTML = '<div class="note">Enter a time above to compare regions.</div>';
+    return;
+  }
+  const minutes = Number(raw);
+  const entries = shipmentDistributionByRegion.filter(entry => entry.times.length);
+  if (!entries.length) {
+    root.innerHTML = '<div class="note">No shipments in the current table-filter scope.</div>';
+    return;
+  }
+  const rankedEntries = entries.map(entry => {
+    const count = entry.times.filter(timeMinutes => timeMinutes > minutes).length;
+    return { ...entry, count, share: +(100 * count / entry.times.length).toFixed(1) };
+  }).sort((a, b) => b.share - a.share || b.count - a.count || a.region.localeCompare(b.region));
+  const cells = rankedEntries.map(entry => {
+    const { count, share } = entry;
+    const shade = Math.min(.72, .08 + share / 100 * .64);
+    return '<td style="background:rgba(220,53,69,' + shade.toFixed(3) + ')" title="' +
+      attr(entry.region) + ': ' + count.toLocaleString() + ' of ' + entry.times.length.toLocaleString() +
+      ' shipments (' + share + '%) took more than ' + minutes + ' minutes">' +
+      '<span class="count">' + count.toLocaleString() + '</span><span class="share">' + share + '%</span></td>';
+  }).join('');
+  root.innerHTML = '<h4>More than ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' minutes by region</h4>' +
+    '<div class="note">Each cell shows shipments above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
+      rankedEntries.map(entry => '<th>' + escHTML(entry.region) + '</th>').join('') +
+      '</tr></thead><tbody><tr><td>&gt; ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' min</td>' +
+      cells + '</tr></tbody></table></div>';
 }
 
 function updateShipmentThresholdVisual() {
@@ -6001,6 +6045,10 @@ function renderQuickBookingSection() {
   const distributionItems = state.selectedRegion
     ? visibleItems.filter(item => item.region === state.selectedRegion) : visibleItems;
   shipmentDistributionTimesMinutes = distributionItems.map(item => Math.max(0, item.total_secs / 60));
+  shipmentDistributionByRegion = [...regionTotals.values()].map(region => ({
+    region: region.region,
+    times: region.values.map(seconds => Math.max(0, seconds / 60)),
+  })).sort((a, b) => a.region.localeCompare(b.region));
   const distributionScope = state.selectedRegion ? 'Region · ' + state.selectedRegion : 'All visible regions';
   const distributionMedian = distributionItems.length
     ? time(medianSecs(distributionItems.map(item => item.total_secs))) : '—';
@@ -6042,7 +6090,8 @@ function renderQuickBookingSection() {
       '<output id="shipmentThresholdResult" class="qb-threshold-result" aria-live="polite">' +
         escHTML(shipmentThresholdSummary(state.distributionThresholdMinutes)) + '</output>' +
       '<span class="note" style="margin:0">Leave Bucket size blank for automatic bands. A time threshold shades the relevant bands in red.</span></div>' +
-    '<div class="chart-wrap"><canvas id="shipmentTimeDistribution"></canvas></div></div></div>';
+    '<div class="chart-wrap"><canvas id="shipmentTimeDistribution"></canvas></div>' +
+    '<div class="qb-threshold-matrix" id="shipmentThresholdMatrix"></div></div></div>';
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
   if (state.page > totalPages) state.page = totalPages;
@@ -6231,6 +6280,7 @@ function renderQuickBookingSection() {
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">#</th>' + headers + '</tr><tr>' + filters +
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
   renderShipmentTimeDistribution(distributionItems, time);
+  updateShipmentThresholdMatrix();
   if (quickBookingState.controlFocus) {
     const focused = el.querySelector('[data-qb-control="' + quickBookingState.controlFocus + '"] button.active');
     if (focused) focused.focus();
