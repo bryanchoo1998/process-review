@@ -2977,6 +2977,7 @@ function getRaw(opts = {}) {
     for (const [key] of RAW_COLS) {
       if (key === 'hours') d[key] = +((r.time_worked || 0) / 3600).toFixed(2);
       else if (key === 'region') d[key] = regionOf(r.agroup || '', r.country || '');
+      else if (key === 'country') d[key] = countryCodeOf(r.country || '');
       else if (key === 'kind') d[key] = 'Parent';
       else d[key] = r[key] != null ? r[key] : '';
     }
@@ -4336,6 +4337,30 @@ if (typeof window !== 'undefined') {
   .qb-category-region .volume-cell b { display: block; color: var(--blue); font-size: .78rem; }
   .qb-category-region .volume-cell span { display: block; margin-top: 1px; color: var(--text3); font-size: .62rem; }
   .qb-category-region .volume-cell .time { color: var(--text2); font-weight: 700; }
+  .qb-category-region .volume-cell.heatmap-cell { transition: background-color .15s ease; }
+  .qb-category-region .volume-cell.heatmap-cell.is-strong b,
+  .qb-category-region .volume-cell.heatmap-cell.is-strong span,
+  .qb-category-region .volume-cell.heatmap-cell.is-strong .time { color: #fff; }
+  .qb-category-region .qb-heatmap-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 7px 0 10px; color: var(--text3); font-size: .65rem; }
+  .qb-category-region .qb-heatmap-legend strong { color: var(--text2); }
+  .qb-category-region .qb-heatmap-scale { display: inline-flex; width: 104px; height: 9px; overflow: hidden; border: 1px solid rgba(33,37,41,.15); border-radius: 99px; background: linear-gradient(90deg, rgba(59,113,202,.72), rgba(255,255,255,.45) 50%, rgba(220,53,69,.72)); }
+  .qb-category-region .matrix-rank { color: var(--text3); font-size: .58rem; font-weight: 700; letter-spacing: .01em; text-transform: uppercase; }
+  .qb-efficiency-ranking { margin-top: 12px; }
+  .qb-efficiency-ranking .efficiency-rank { color: var(--blue); font-weight: 800; }
+  .qb-efficiency-ranking .efficiency-best td { background: #f1f7ff; }
+  .qb-efficiency-ranking .qb-efficiency-row { cursor: pointer; }
+  .qb-efficiency-ranking .qb-efficiency-row:hover td, .qb-efficiency-ranking .qb-efficiency-row:focus td { background: #e8f0fe; }
+  .qb-efficiency-ranking .qb-efficiency-hover-card { margin-top: 10px; padding: 9px 11px; border: 1px solid #d9e4f5; border-left: 3px solid var(--blue); border-radius: 7px; background: #f8fbff; min-height: 42px; }
+  .qb-efficiency-ranking .qb-efficiency-hover-title { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font-size: .72rem; }
+  .qb-efficiency-ranking .qb-efficiency-hover-title span { color: var(--text3); font-size: .65rem; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table { width: 100%; margin-top: 7px; border-collapse: collapse; font-size: .65rem; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table th { padding: 3px 6px; border-bottom: 1px solid #d9e4f5; color: var(--text3); font-size: .58rem; font-weight: 700; letter-spacing: .03em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table td { padding: 4px 6px; border-bottom: 1px solid rgba(217,228,245,.65); }
+  .qb-efficiency-ranking .qb-efficiency-hover-table tr:last-child td { border-bottom: 0; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table .delay-rank { color: var(--red); font-weight: 800; text-align: center; white-space: nowrap; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table .time-value { color: var(--blue); font-weight: 800; white-space: nowrap; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table .baseline-value { color: var(--text3); white-space: nowrap; }
+  .qb-efficiency-ranking .qb-efficiency-hover-table .delay { color: var(--red); font-weight: 800; text-align: right; white-space: nowrap; }
   .qb-category-region .qb-matrix-sort-header { padding: 0; cursor: pointer; }
   .qb-category-region .qb-matrix-sort-button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 7px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: 700; padding: 7px 9px; text-align: inherit; white-space: nowrap; }
   .qb-category-region .qb-matrix-sort-button:hover { color: var(--blue); background: #e8f0fe; }
@@ -4348,6 +4373,8 @@ if (typeof window !== 'undefined') {
   .qb-category-region .qb-matrix-category-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
   .qb-category-region .gtable th:first-child { position: sticky; left: 0; z-index: 3; background: var(--surface2); min-width: 190px; }
   .qb-category-region .gtable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; }
+  .qb-category-region .gtable th.is-matrix-focused, .qb-category-region .gtable td.is-matrix-focused { box-shadow: inset 2px 0 0 var(--blue), inset -2px 0 0 var(--blue); }
+  .qb-category-region .gtable th.is-matrix-focused { background: #e8f0fe; }
   .qb-category-region .gtable tfoot td { background: var(--surface2); border-top: 2px solid var(--border); }
   .qb-category-region .gtable tfoot td:first-child { z-index: 2; background: var(--surface2); }
 
@@ -5651,7 +5678,7 @@ function renderBaselineTable() {
 const quickBookingState = {
   filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
-  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', categoryMatrixCategoryDir: 'desc', categoryMatrixSortRegion: '', categoryMatrixSelectedCategory: '',
+  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', categoryMatrixCategoryDir: 'desc', categoryMatrixSortRegion: '', categoryMatrixSelectedCategory: '', categoryMatrixFocusedRegion: '', categoryMatrixScrollRegion: '',
   page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
@@ -5660,6 +5687,7 @@ let shipmentDistributionChart = null;
 let shipmentDistributionTimesMinutes = [];
 let shipmentDistributionBands = [];
 let shipmentDistributionByRegion = [];
+let overallEfficiencyHoverData = new Map();
 const shipmentThresholdOverlayPlugin = {
   id: 'shipmentThresholdOverlay',
   beforeDatasetsDraw(chart) {
@@ -5933,6 +5961,26 @@ function quickBookingCategoryMatrixSelect(category) {
   renderQuickBookingSection();
 }
 
+function showOverallEfficiencyHover(region) {
+  const card = document.getElementById('overallEfficiencyHoverCard');
+  const data = overallEfficiencyHoverData.get(region);
+  if (!card || !data) return;
+  const rows = data.above.slice(0, 8).map(item => '<tr><td class="delay-rank">#' + item.slowest_rank + ' / ' + item.region_total + '</td><td><b>' + escHTML(item.category) + '</b></td><td class="time-value">' +
+    escHTML(item.time) + '</td><td class="baseline-value">' + escHTML(item.baseline) + '</td><td class="delay">+' +
+    item.delta.toFixed(1) + '%</td></tr>').join('');
+  card.innerHTML = '<div class="qb-efficiency-hover-title"><b>' + escHTML(region) + '</b><span>' +
+    data.above.length + ' ' + (data.above.length === 1 ? 'category' : 'categories') + ' above their baseline</span></div>' +
+    (rows ? '<table class="qb-efficiency-hover-table"><thead><tr><th>Slowest rank</th><th>Category</th><th>Time</th><th>Baseline</th><th>vs baseline</th></tr></thead><tbody>' + rows + '</tbody></table>' :
+      '<div class="note" style="margin:6px 0 0">No categories are above their selected-statistic baseline in the current scope.</div>') +
+    (data.above.length > 8 ? '<div class="note" style="margin:6px 0 0">Showing the 8 largest delays.</div>' : '');
+}
+
+function focusOverallEfficiencyRegion(region) {
+  quickBookingState.categoryMatrixFocusedRegion = region;
+  quickBookingState.categoryMatrixScrollRegion = region;
+  renderQuickBookingSection();
+}
+
 function quickBookingHotspotSort(sort) {
   quickBookingState.hotspotSort = sort === 'median' ? 'median' : 'total';
   quickBookingState.controlFocus = 'hotspots';
@@ -6193,11 +6241,53 @@ function renderQuickBookingSection() {
     total_secs: visibleItems.reduce((sum, item) => sum + item.total_secs, 0),
     values: visibleItems.map(item => item.total_secs),
   };
-  const categoryVolumeCell = cell => cell
-    ? '<td class="volume-cell"><b>' + cell.shipments.toLocaleString() + ' shipments</b><span>' +
-      cell.tickets.toLocaleString() + ' tickets</span><span class="time">' + escHTML(metricLabel) + ': ' +
-      regionMetric(cell.values, cell.total_secs, cell.shipments) + '</span></td>'
-    : '<td class="volume-cell" style="color:var(--text3)">—</td>';
+  // Compare a country/region only with its own category's baseline. This
+  // prevents intrinsically long categories from colouring every cell red.
+  const categoryBaselines = new Map(categoryRegionRows.map(row => [row.category, selectedMetricSeconds(row.total)]));
+  const heatmapDeltas = categoryRegionRows.flatMap(row => categoryRegions.map(region => {
+    const cell = row.byRegion.get(region);
+    if (!cell || !cell.shipments) return null;
+    const baseline = categoryBaselines.get(row.category) || 0;
+    const value = selectedMetricSeconds(cell);
+    return baseline > 0 ? (value - baseline) / baseline : (value > 0 ? 1 : 0);
+  }).filter(value => value != null));
+  const heatmapMaxDeviation = Math.max(.01, ...heatmapDeltas.map(value => Math.abs(value)));
+  const categoryEfficiencyRanks = new Map(categoryRegionRows.map(row => {
+    const ranked = categoryRegions.map(region => ({ region, cell: row.byRegion.get(region) }))
+      .filter(entry => entry.cell && entry.cell.shipments)
+      .sort((a, b) => selectedMetricSeconds(a.cell) - selectedMetricSeconds(b.cell) || a.region.localeCompare(b.region));
+    return [row.category, new Map(ranked.map((entry, index) => [entry.region, { rank: index + 1, total: ranked.length }]))];
+  }));
+  const categorySlowestRanks = new Map(categoryRegionRows.map(row => {
+    const ranked = categoryRegions.map(region => ({ region, cell: row.byRegion.get(region) }))
+      .filter(entry => entry.cell && entry.cell.shipments)
+      .sort((a, b) => selectedMetricSeconds(b.cell) - selectedMetricSeconds(a.cell) || a.region.localeCompare(b.region));
+    return [row.category, new Map(ranked.map((entry, index) => [entry.region, { rank: index + 1, total: ranked.length }]))];
+  }));
+  const categoryHeatmap = (cell, row) => {
+    if (!cell || !cell.shipments) return null;
+    const baseline = categoryBaselines.get(row.category) || 0;
+    const value = selectedMetricSeconds(cell);
+    const delta = baseline > 0 ? (value - baseline) / baseline : (value > 0 ? 1 : 0);
+    const intensity = Math.min(1, Math.abs(delta) / heatmapMaxDeviation);
+    const strong = intensity >= .66;
+    const colour = Math.abs(delta) < .0001 ? 'rgba(33,37,41,.045)'
+      : delta > 0 ? 'rgba(220,53,69,' + (.08 + intensity * .64).toFixed(3) + ')'
+      : 'rgba(59,113,202,' + (.08 + intensity * .58).toFixed(3) + ')';
+    const relation = delta > .0001 ? '+' + (delta * 100).toFixed(1) + '% above'
+      : delta < -.0001 ? (delta * 100).toFixed(1) + '% below' : 'at';
+    return { colour, strong, detail: ' · ' + relation + ' category ' + metricLabel.toLowerCase() + ' baseline (' + time(baseline) + ')' };
+  };
+  const categoryVolumeCell = (cell, heat = null, rank = null, focused = false) => {
+    if (!cell) return '<td class="volume-cell" style="color:var(--text3)">—</td>';
+    const heatStyle = heat == null ? '' : ' style="background:' + heat.colour + '"';
+    const heatTitle = ' title="' + attr(metricLabel + ' time: ' + regionMetric(cell.values, cell.total_secs, cell.shipments) + (heat ? heat.detail : '')) + '"';
+    return '<td class="volume-cell' + (heat == null ? '' : ' heatmap-cell') + (heat && heat.strong ? ' is-strong' : '') + (focused ? ' is-matrix-focused' : '') + '"' + heatStyle + heatTitle + '><b>' +
+      cell.shipments.toLocaleString() + ' shipments</b><span>' + cell.tickets.toLocaleString() +
+      ' tickets</span><span class="time">' + escHTML(metricLabel) + ': ' +
+      regionMetric(cell.values, cell.total_secs, cell.shipments) + '</span>' +
+      (rank ? '<span class="matrix-rank">Efficiency #' + rank.rank + ' / ' + rank.total + '</span>' : '') + '</td>';
+  };
   const categorySortArrow = state.categoryMatrixCategoryDir === 'desc' ? '&#9660;' : '&#9650;';
   const categoryRegionHeaders = '<thead><tr>' +
     '<th data-qb-control="' + (state.categoryMatrixSortRegion ? '' : 'matrix-category-sort') + '" class="qb-matrix-sort-header"><button type="button" class="qb-matrix-sort-button ' +
@@ -6207,7 +6297,8 @@ function renderQuickBookingSection() {
       (!state.categoryMatrixSortRegion ? '<span class="qb-matrix-sort-arrow" aria-hidden="true">' + categorySortArrow + '</span>' : '') + '</button></th>' +
     categoryRegions.map(region => {
       const isActive = state.categoryMatrixSortRegion === region;
-      return '<th' + (isActive ? ' data-qb-control="matrix-region-sort"' : '') + ' class="num qb-matrix-sort-header"><button type="button" class="qb-matrix-sort-button ' +
+      const isFocused = state.categoryMatrixFocusedRegion === region;
+      return '<th data-matrix-region="' + attr(encodeURIComponent(region)) + '"' + (isActive ? ' data-qb-control="matrix-region-sort"' : '') + ' class="num qb-matrix-sort-header' + (isFocused ? ' is-matrix-focused' : '') + '"><button type="button" class="qb-matrix-sort-button ' +
         (isActive ? 'active' : '') + '" onclick="quickBookingCategoryMatrixTimeSort(\'region\', ' + attr(JSON.stringify(region)) + ')" ' +
         'aria-label="Sort categories by ' + escHTML(metricLabel.toLowerCase()) + ' time in ' + attr(region) + '; currently ' +
         (isActive && state.categoryMatrixCategoryDir === 'asc' ? 'low to high' : 'high to low') + '">' + escHTML(region) +
@@ -6216,9 +6307,41 @@ function renderQuickBookingSection() {
   const selectedCategoryNote = state.categoryMatrixSelectedCategory
     ? ' <b>' + escHTML(state.categoryMatrixSelectedCategory) + '</b> is selected, so region columns are ranked highest to lowest by its ' + escHTML(metricLabel.toLowerCase()) + ' time. Click the selected category again to clear it.'
     : ' Click a category name to rank the region columns by that category&apos;s ' + escHTML(metricLabel.toLowerCase()) + ' time.';
+  const heatmapLegend = heatmapDeltas.length
+    ? '<div class="qb-heatmap-legend" aria-label="Category baseline heatmap scale"><strong>Category-baseline heatmap</strong><span>Below baseline</span>' +
+      '<span class="qb-heatmap-scale" aria-hidden="true"></span><span>Above baseline</span>' +
+      '<span>· red = longer and blue = shorter than that category&apos;s ' + escHTML(metricLabel.toLowerCase()) + ' time</span></div>'
+    : '';
+  const overallRegionEfficiency = [...regionTotals.values()].filter(region => region.shipments)
+    .map(region => ({ ...region, metric_secs: selectedMetricSeconds(region) }))
+    .sort((a, b) => a.metric_secs - b.metric_secs || b.shipments - a.shipments || a.region.localeCompare(b.region));
+  overallEfficiencyHoverData = new Map(overallRegionEfficiency.map(region => {
+    const above = categoryRegionRows.map(row => {
+      const cell = row.byRegion.get(region.region);
+      const baseline = categoryBaselines.get(row.category) || 0;
+      const value = selectedMetricSeconds(cell);
+      const delta = baseline > 0 ? (value - baseline) / baseline : 0;
+      const rank = (categorySlowestRanks.get(row.category) || new Map()).get(region.region);
+      return cell && cell.shipments && delta > .0001 ? {
+        category: row.category, time: regionMetric(cell.values, cell.total_secs, cell.shipments), baseline: time(baseline), delta: Math.abs(delta * 100),
+        slowest_rank: rank ? rank.rank : '—', region_total: rank ? rank.total : '—',
+      } : null;
+    }).filter(Boolean).sort((a, b) => b.delta - a.delta || a.category.localeCompare(b.category));
+    return [region.region, { above }];
+  }));
+  const overallEfficiencySection = '<div class="chart-grid qb-efficiency-ranking"><div class="chart-card full">' +
+    '<h3>Overall processing-time efficiency · Country / Region</h3>' +
+    '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the heatmap. Shipment volume is shown to help assess the result.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipments</th><th class="num">Total time</th></tr></thead><tbody>' +
+    (overallRegionEfficiency.map((region, index) => '<tr tabindex="0" role="button" class="qb-efficiency-row' + (index === 0 ? ' efficiency-best' : '') + '" onmouseenter="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onfocus="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onclick="focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')}" aria-label="Show details and focus ' + attr(region.region) + ' in the heatmap"><td class="num efficiency-rank">#' + (index + 1) +
+      '</td><td><b>' + escHTML(region.region) + '</b></td><td class="num"><b>' + regionMetric(region.values, region.total_secs, region.shipments) +
+      '</b></td><td class="num">' + region.shipments.toLocaleString() + '</td><td class="num">' + time(region.total_secs) + '</td></tr>').join('') ||
+      '<tr><td colspan="5" style="color:var(--text3)">No countries or regions match the current filters.</td></tr>') +
+    '</tbody></table></div><div class="qb-efficiency-hover-card" id="overallEfficiencyHoverCard" aria-live="polite">Hover a Country / Region row to see categories above their baseline.</div></div></div>';
   const categoryRegionSection = '<div class="chart-grid qb-category-region"><div class="chart-card full">' +
-    '<h3>Shipment, ticket and time · Category × Region</h3>' +
+    '<h3>Shipment, ticket and time heatmap · Category × Country / Region</h3>' +
     '<div class="note">Each cell shows distinct shipments, tickets, then the selected ' + escHTML(metricLabel.toLowerCase()) + ' time. Click <b>Category</b> to rank categories across all regions, or click an individual <b>region name</b> to rank categories within that region. Click again to reverse the order.' + selectedCategoryNote + ' Category time uses each shipment&apos;s ticket time in that category. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region and all selected shipment time. This view follows the current Shipment Analysis scope and table filters.</div>' +
+    heatmapLegend +
     '<div class="tbl-wrap"><table class="gtable">' + categoryRegionHeaders + '<tbody>' +
       (categoryRegionRows.map(row => {
         const isSelected = state.categoryMatrixSelectedCategory === row.category;
@@ -6228,7 +6351,8 @@ function renderQuickBookingSection() {
           (isSelected ? '<span class="qb-matrix-sort-arrow" aria-hidden="true">&#9660;</span>' : '') + '</button></td>' +
         categoryRegions.map(region => {
           const cell = row.byRegion.get(region);
-          return categoryVolumeCell(cell);
+          const rank = (categoryEfficiencyRanks.get(row.category) || new Map()).get(region);
+          return categoryVolumeCell(cell, categoryHeatmap(cell, row), rank, state.categoryMatrixFocusedRegion === region);
         }).join('') +
         categoryVolumeCell(row.total) + '</tr>';
       }).join('') ||
@@ -6236,7 +6360,7 @@ function renderQuickBookingSection() {
       '</tbody><tfoot><tr><td><b>Total</b></td>' +
         categoryRegions.map(region => {
           const total = regionTotals.get(region) || { shipments: 0, tickets: 0, total_secs: 0, values: [] };
-          return categoryVolumeCell(total);
+          return categoryVolumeCell(total, null, null, state.categoryMatrixFocusedRegion === region);
         }).join('') +
         categoryVolumeCell(categoryRegionTotals) + '</tr></tfoot></table></div></div></div>';
 
@@ -6414,6 +6538,7 @@ function renderQuickBookingSection() {
     '<div class="note" style="margin-top:10px">Region is taken from the assignment group of the shipment&apos;s latest opened ticket. Region cards reflect the table filters.</div>' +
     '<div class="kpi-row" style="margin-top:10px">' + regionCards + '</div>' +
     distributionSection +
+    overallEfficiencySection +
     categoryRegionSection +
     '<div class="filter-meta"><span>' + (visibleItems.length ? (pageStart + 1).toLocaleString() + '–' +
       Math.min(pageStart + state.perPage, visibleItems.length).toLocaleString() : '0') +
@@ -6433,6 +6558,17 @@ function renderQuickBookingSection() {
     const focused = el.querySelector('[data-qb-control="' + quickBookingState.controlFocus + '"] button.active');
     if (focused) focused.focus();
     quickBookingState.controlFocus = null;
+  }
+  if (quickBookingState.categoryMatrixScrollRegion) {
+    const region = quickBookingState.categoryMatrixScrollRegion;
+    quickBookingState.categoryMatrixScrollRegion = '';
+    requestAnimationFrame(() => {
+      const target = el.querySelector('[data-matrix-region="' + encodeURIComponent(region) + '"]');
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      const button = target.querySelector('button');
+      if (button) button.focus({ preventScroll: true });
+    });
   }
 }
 
@@ -6987,15 +7123,39 @@ const REGION_RE = /\b(AU|US|UK|CA|HK|SG|NZ|TW|CN|SZ|MY|TH|JP|KR|IN|ID|PH|VN|DE|N
 // In that format the region is the 2–3 character segment immediately before
 // the workflow direction, e.g. “... - NB - EXPORT SEA”.
 const REGION_FALLBACK_RE = /(?:^|\s-\s)([A-Z]{2,3})(?=\s-\s(?:EXPORT|IMPORT)\b)/i;
+const COUNTRY_CODE_ALIASES = Object.freeze({
+  GERMANY: 'DE',
+  'UNITED KINGDOM': 'UK',
+  NETHERLAND: 'NL',
+  NETHERLANDS: 'NL',
+  POLAND: 'PL',
+  SWEDEN: 'SE',
+});
+const countryCodeOf = country => {
+  const value = norm(country).toUpperCase();
+  return COUNTRY_CODE_ALIASES[value] || value;
+};
+// Snapshot of Country.csv (Assignment Group → FTE Country). It is only used
+// when the source does not provide a country and the assignment group has no
+// usable region token, so an exact maintained mapping takes precedence over
+// guessing from the group name.
+const FTE_COUNTRY_BY_ASSIGNMENT_GROUP = Object.freeze({"GBS - GL - OPERATIONS 3":"AU","GBS - GL - OPERATIONS 1":"AU","GBS - GL - OPERATIONS 4":"AU","GBS - GL - PROCUREMENT":"AU","GBS - GL - OPERATIONS 2":"AU","GBS - GL - OPERATIONS 5":"AU","GBS - GF - DK - MILE SCHED - IMP & EXP SEA":"DK","GBS - GF - FI - MILE SCHED - IMP SEA":"FI","GBS - GF - NB - EXP SEA":"NB","GBS - GF - AMS TRANSSHIP UPD - NL - IMPORT AIR":"NL","GBS - GF - ARN - EMEA - IRRELEVANT":"EMEA","GBS - GF - ARN - NL - IMPORT SEA":"NL","GBS - GF - ARN - SE - IMPORT SEA":"SE","GBS - GF - ARN - UK - IMPORT SEA":"UK","GBS - GF - BT & ST JOB INV ENTRY - AU - CUSTOMS":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - ADL":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - BNE":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - MEL":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - NIKE":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - SYD":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - SYD - PAN":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - SYD - TJX":"AU","GBS - GF - BT JOB REG - AU - CUSTOMS - TP":"AU","GBS - GF - BT JOB REG - DE - CUSTOMS":"DE","GBS - GF - BT JOB REG - NL - CUSTOMS":"NL","GBS - GF - CANVAL - EMEA - IMPORT SEA":"EMEA","GBS - GF - CTO - DE - IMPORT AIR":"DE","GBS - GF - CTO - NL - IMPORT AIR":"NL","GBS - GF - CTO - UK - IMPORT AIR":"UK","GBS - GF - CTO & OUTTURN - DE - IMPORT AIR":"DE","GBS - GF - CUSTOM E - DOCS - DE - CUSTOMS":"DE","GBS - GF - CUSTOM E - DOCS - IT - CUSTOMS":"IT","GBS - GF - DE - EXPORT SEA EDOC":"DE","GBS - GF - DHR E13 - DE - IMPORT SEA":"DE","GBS - GF - DHR E13 - DK - IMPORT SEA":"DK","GBS - GF - DHR E13 - FI - IMPORT SEA":"FI","GBS - GF - DHR E13 - GZ - IMPORT SEA":"CN","GBS - GF - DHR E13 - HK - IMPORT SEA":"HK","GBS - GF - DHR E13 - IT - IMPORT SEA":"IT","GBS - GF - DHR E13 - NL - IMPORT SEA":"NL","GBS - GF - DHR E13 - SE - IMPORT SEA":"SE","GBS - GF - DHR E13 - SG - IMPORT SEA":"SG","GBS - GF - EMEA - CS TO CHECK":"EMEA","GBS - GF - FI - IMPORT SEA":"FI","GBS - GF - GATE IN DATE (E5) - DK - IMPORT SEA":"DK","GBS - GF - GATE IN DATE (E5) - SG - IMPORT SEA":"SG","GBS - GF - GOU - DE - IMPORT SEA":"DE","GBS - GF - GOU - DK - IMPORT SEA":"DK","GBS - GF - GOU - EMEA - IMPORT SEA":"EMEA","GBS - GF - GOU - FI - IMPORT SEA":"FI","GBS - GF - GOU - IT - IMPORT SEA":"IT","GBS - GF - GOU - NL - IMPORT SEA":"NL","GBS - GF - GOU - SE - IMPORT SEA":"SE","GBS - GF - GOU - UK - IMPORT SEA":"UK","GBS - GF - HK - MILE SCHED - EXP SEA & HKG SEAMASTER":"HK","GBS - GF - IRP E3 - DE - IMPORT AIR":"DE","GBS - GF - JOB PROFITABILITY - CA - REPORT":"CA","GBS - GF - JOB PROFITABILITY - US - REPORT":"US","GBS - GF - JOB VAL RPT - EMEA":"EMEA","GBS - GF - KOGAN E - DOCS - AU - IMPORT SEA":"AU","GBS - GF - MDP - CUSTOMS A":"AU","GBS - GF - MDP - CUSTOMS B":"AU","GBS - GF - MILE E10 POD - HK - IMPORT SEA":"HK","GBS - GF - MILE E6 E8 (ATD & ATA) - AU - IMPORT SEA":"AU","GBS - GF - MILE E6 E8 (ATD & ATA) - DE - EXPORT AIR":"DE","GBS - GF - MILE E6 E8 (ATD & ATA) - DE - IMPORT AIR":"DE","GBS - GF - MILE E6 E8 (ATD & ATA) - DE - IMPORT SEA":"DE","GBS - GF - MILE E6 E8 (ATD & ATA) - DK - EXPORT AIR":"DK","GBS - GF - MILE E6 E8 (ATD & ATA) - DK - IMPORT AIR":"DK","GBS - GF - MILE E6 E8 (ATD & ATA) - DK - IMPORT SEA":"DK","GBS - GF - MILE E6 E8 (ATD & ATA) - FI - EXPORT AIR":"FI","GBS - GF - MILE E6 E8 (ATD & ATA) - FI - IMPORT AIR":"FI","GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - IMPORT SEA":"CN","GBS - GF - MILE E6 E8 (ATD & ATA) - HK - EXPORT SEA":"HK","GBS - GF - MILE E6 E8 (ATD & ATA) - HK - IMPORT SEA":"HK","GBS - GF - MILE E6 E8 (ATD & ATA) - IT - EXPORT AIR":"IT","GBS - GF - MILE E6 E8 (ATD & ATA) - IT - IMPORT AIR":"IT","GBS - GF - MILE E6 E8 (ATD & ATA) - IT - IMPORT SEA":"IT","GBS - GF - MILE E6 E8 (ATD & ATA) - NL - EXPORT AIR":"NL","GBS - GF - MILE E6 E8 (ATD & ATA) - NL - IMPORT AIR":"NL","GBS - GF - MILE E6 E8 (ATD & ATA) - NL - IMPORT SEA":"NL","GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - EXPORT AIR":"NZ","GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - IMPORT AIR":"NZ","GBS - GF - MILE E6 E8 (ATD & ATA) - NZ - IMPORT SEA":"NZ","GBS - GF - MILE E6 E8 (ATD & ATA) - SE - EXPORT AIR":"SE","GBS - GF - MILE E6 E8 (ATD & ATA) - SE - IMPORT AIR":"SE","GBS - GF - MILE E6 E8 (ATD & ATA) - SE - IMPORT SEA":"SE","GBS - GF - MILE E6 E8 (ATD & ATA) - SG - EXPORT SEA":"SG","GBS - GF - MILE E6 E8 (ATD & ATA) - SG - IMPORT SEA":"SG","GBS - GF - MILE E6 E8 (ATD & ATA) - TW - EXPORT SEA":"TW","GBS - GF - MILE E6 E8 (ATD & ATA) - UK - EXPORT AIR":"UK","GBS - GF - MILE E6 E8 (ATD & ATA) - UK - IMPORT AIR":"UK","GBS - GF - MILE E6 E8 (ATD & ATA) - UK - IMPORT SEA":"UK","GBS - GF - MILESTONE - AUTOMATION - SEA":"DIVISION","GBS - GF - MST WAREHOUSE MST UPD - NL - ROAD":"NL","GBS - GF - NIKE BOX - CUSTOMS A":"AU","GBS - GF - NL - MILE SCHED - AMS TSP UPDATE AIR":"NL","GBS - GF - NRA PROCESS - US - IMPORT SEA":"US","GBS - GF - OUTTURN - DE - IMPORT SEA":"DE","GBS - GF - PO GEBHEIHAM - DE - CUST SERV":"DE","GBS - GF - POD E10 - NL - IMPORT AIR":"NL","GBS - GF - POD E10 - SE - IMPORT SEA":"SE","GBS - GF - POD E10 - UK - IMPORT AIR":"UK","GBS - GF - POD E10 - ZA - IMPORT AIR":"ZA","GBS - GF - PREPARING CUSTOMS FORM - HK - AIR":"HK","GBS - GF - PREPARING CUSTOMS FORM - HK - SEA":"HK","GBS - GF - REG - DE - IMPORT AIR":"DE","GBS - GF - REG - DE - IMPORT SEA/ROA":"DE","GBS - GF - REG - DE - ROAD":"DE","GBS - GF - REG - DK - IMPORT SEA":"DK","GBS - GF - REG - IT - IMPORT AIR":"IT","GBS - GF - REG - IT - IMPORT SEA":"IT","GBS - GF - REG - NL - IMPORT SEA":"NL","GBS - GF - REG - SE - IMPORT AIR":"SE","GBS - GF - REG - SE - IMPORT SEA":"SE","GBS - GF - REG - SG - CUSTOMS":"SG","GBS - GF - REG - UK - CUSTOMS":"UK","GBS - GF - REG - UK - IMPORT SEA/AIR":"UK","GBS - GF - REG - UK UNIQUE - IMPORT SEA/AIR":"UK","GBS - GF - STJOB PRO - AU - CUSTOMS - ADL":"AU","GBS - GF - STJOB PRO - AU - CUSTOMS - BNE":"AU","GBS - GF - STJOB PRO - AU - CUSTOMS - EXP":"AU","GBS - GF - STJOB PRO - AU - CUSTOMS - MEL":"AU","GBS - GF - STJOB PRO - AU - CUSTOMS - SYD":"AU","GBS - GF - TJX CHAFTA REPORT - AU":"AU","GBS - GF - TJXDOC - AU - CUST SERV":"AU","GBS - GF - TRS - DE - IMPORT SEA":"DE","GBS - GF - TRS - DK - IMPORT SEA":"DK","GBS - GF - TRS - EMEA SEA":"EMEA","GBS - GF - TRS - FI - IMPORT SEA":"FI","GBS - GF - TRS - IT - IMPORT SEA":"IT","GBS - GF - TRS - NL - IMPORT SEA":"NL","GBS - GF - TRS - SE - IMPORT SEA":"SE","GBS - GF - TRS - UK - IMPORT SEA":"UK","GBS - GF - TW - MILE SCHED - IMP & EXP AIR":"TW","GBS - GF - US - MILE SCHED - E3 AIR":"US","GBS - GF - VAL - BE - IMPORT AIR":"BE","GBS - GF - VAL - BE - IMPORT SEA":"BE","GBS - GF - VAL - DE - IMPORT AIR":"DE","GBS - GF - VAL - DE - IMPORT SEA":"DE","GBS - GF - VAL - DK - IMPORT AIR":"DK","GBS - GF - VAL - DK - IMPORT SEA":"DK","GBS - GF - VAL - FI - IMPORT AIR":"FI","GBS - GF - VAL - FI - IMPORT SEA":"FI","GBS - GF - VAL - IT - IMPORT AIR":"IT","GBS - GF - VAL - IT - IMPORT SEA":"IT","GBS - GF - VAL - NL - IMPORT AIR":"NL","GBS - GF - VAL - NL - IMPORT SEA":"NL","GBS - GF - VAL - PL - IMPORT AIR":"PL","GBS - GF - VAL - PL - IMPORT SEA":"PL","GBS - GF - VAL - SE - IMPORT AIR":"SE","GBS - GF - VAL - SE - IMPORT SEA":"SE","GBS - GF - VAL - UK - IMPORT AIR":"UK","GBS - GF - VAL - UK - IMPORT SEA":"UK","GBS - GF - VAL RPT - EMEA":"EMEA","GBS - GF - FINAL HBL RELEASE - HAN - EXPORT SEA":"VN","GBS - GF - HBL - HAN - EXPORT SEA":"VN","GBS - GF - MBL - HAN - EXPORT SEA":"VN","GBS - GF - QBOOK CONSOL - HAN - EXPORT SEA":"VN","GBS - GF - CONSOL HBL - NB - EXPORT SEA":"NB","GBS - GF - CONSOL - SH - EXPORT SEA":"SH","GBS - GF - FINAL HBL RELEASE - SGN - EXPORT SEA":"VN","GBS - GF - FINAL HBL RELEASE - SZ - EXPORT SEA":"SZ","GBS - GF - HBL - HK - EXPORT SEA":"HK","GBS - GF - HBL - NB - EXPORT SEA":"NB","GBS - GF - HBL - SGN - EXPORT SEA":"VN","GBS - GF - HBL - SH - EXPORT SEA":"SH","GBS - GF - HBL - SZ - EXPORT SEA":"SZ","GBS - GF - HBL - TH - EXPORT SEA":"TH","GBS - GF - HBL - TW - EXPORT SEA":"TW","GBS - GF - MBL - SGN - EXPORT SEA":"VN","GBS - GF - MBL - SH - EXPORT SEA":"SH","GBS - GF - MBL - SZ - EXPORT SEA":"SZ","GBS - GF - MBL - TH - EXPORT SEA":"TH","GBS - GF - MBL - TW - EXPORT SEA":"TW","GBS - GF – OCEAN DOCS - AU - EXPORT SEA":"AU","GBS - GF - OCEAN DOCS - EMEA - EXPORT SEA":"EMEA","GBS - GF - OPS - EMEA - EXPORT SEA":"EMEA","GBS - GF - OPS - JP - EXPORT SEA":"JP","GBS - GF - OPS - KR - EXPORT SEA":"KR","GBS - GF - OPS - SH - EXPORT SEA - SAT":"SH","GBS - GF - OPS - SH - EXPORT SEA - TTI":"SH","GBS - GF - PA NON TOLL DEST AG - SH - EXPORT SEA":"SH","GBS - GF - PA NON TOLL DEST AG - SZ - EXPORT SEA":"SZ","GBS - GF - QBOOK - NB - EXPORT SEA":"NB","GBS - GF - QBOOK - SG - EXPORT SEA":"SG","GBS - GF - QBOOK - SH - EXPORT SEA":"SH","GBS - GF - QBOOK CONSOL - AU - EXPORT SEA":"AU","GBS - GF - QBOOK CONSOL - HK - EXPORT SEA":"HK","GBS - GF - QBOOK CONSOL - SGN - EXPORT SEA":"VN","GBS - GF - QBOOK CONSOL - SZ - EXPORT SEA":"SZ","GBS - GF - QBOOK CONSOL - TW - EXPORT SEA":"TW","GBS - GF - SAILING SCHED - HK - EXPORT SEA":"HK","GBS - GF - SHIP INST - HAN - EXPORT SEA":"VN","GBS - GF - SHIP INST - HK - EXPORT SEA":"HK","GBS - GF - SHIP INST - SGN - EXPORT SEA":"VN","GBS - GF - SHIP INST - SH - EXPORT SEA - AME":"SH","GBS - GF - SHIP INST - SH - EXPORT SEA - ANZ":"SH","GBS - GF - SHIP INST - SZ - EXPORT SEA - P1":"SZ","GBS - GF - SHIP INST - SZ - EXPORT SEA - P2":"SZ","GBS - GF - SHIP INST - SZ - EXPORT SEA - P3":"SZ","GBS - GF - SHIP INST - TH - EXPORT SEA":"TH","GBS - GF - SHIP INST - TW - EXPORT SEA":"TW","GBS - GF - BT JOB REG - US - CUSTOMS":"US","GBS - GF - AR MDM - GLOBAL - MDM":"DIVISION","GBS - GF - ARN - US - IMPORT SEA":"US","GBS - GF - CAV E9 - CA - IMPORT SEA":"CA","GBS - GF - PO RECON TTI - AU - CUST SERV":"AU","GBS - GF - AP MDM - GLOBAL - MDM":"DIVISION","GBS - GF - EMERSON BOOK - GLOBAL":"DIVISION","GBS - GF - IRP E3 - VN - EXPORT SEA":"VN","GBS - GF - SHIPMENT PROFILE REPORT - US":"US","GBS - GF - ORGANIZATION CODE VAL - GLOBAL":"DIVISION","GBS - GF - PO APPROVAL - NZ - CUST SERV":"NZ","GBS - GF - SSCOCEAN":"DIVISION","GBS - GF - DOC MGT - AU - CUST SERV":"AU","GBS - GF - TJX DOC E - DOCS - AU - CUST SERV":"AU","GBS - GF - DOCS ADIDAS - NZ - CUST SERV":"NZ","GBS - GF - PO RECON ADIDAS - NZ - CUST SERV":"NZ","GBS - GF - BT REG ADIDAS - NZ - CUST SERV":"NZ","GBS - GF - PO RECON KOGAN - AU - CUST SERV":"AU","GBS - GF - MILE E6 E8 (ATD & ATA) - TW - IMPORT AIR":"TW","GBS - GF - MILE E6 E8 (ATD & ATA) - TW - EXPORT AIR":"TW","GBS - GF - MILE E6 E8 (ATD & ATA) - SG - EXPORT AIR":"SG","GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - EXPORT AIR":"CN","GBS - GF - MILE E6 E8 (ATD & ATA) - SH - EXPORT AIR":"CN","GBS - GF - NINE WEST JONES - CN - CUST SERV":"CN","GBS - GF - IMP AUTO - IN - CUST SERV":"IN","GBS - GF - PO RECON - AU - CUST SERV":"AU","GBS - GF - CAV E9 - NL - IMPORT SEA":"NL","GBS - GF - CAV E9 - US - IMPORT SEA":"US","GBS - GF - CAV E9 - UK - IMPORT SEA":"UK","GBS - GF - MILE E6 E8 (ATD & ATA) - AU - EXPORT AIR":"AU","GBS - GF - MILE E6 E8 (ATD & ATA) - HK - EXPORT AIR":"HK","GBS - GF - CHASSING DOC - CA - EXPORT SEA":"CA","GBS - GF - CHASSING DOC - CA - IMPORT SEA":"CA","GBS - GF - CHASSING DOC - US - EXPORT SEA":"US","GBS - GF - CAV E9 - DK - IMPORT SEA":"DK","GBS - GF - CHASSING DOC - US - IMPORT SEA":"US","GBS - GF - IRP E3 - HK - EXPORT AIR":"HK","GBS - GF - CAV E9 - IT - IMPORT SEA":"IT","GBS - GF - CAV E9 - DE - IMPORT SEA":"DE","GBS - GF - COI REPORT - US - ROAD":"US","GBS - GF - CLIENT RATE - US - POST SALES":"US","GBS - GF - PO MANAGEMENT - CUST SERV":"DIVISION","GBS - GF - BT REG ADIDAS - AU - CUST SERV":"AU","GBS - GF - PO RECON TTI - NZ - CUST SERV":"NZ","GBS - GF - DHR E13 - CA - IMPORT SEA":"CA","GBS - GF - DOC MGT - US - CUST SERV":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - GZ - IMPORT AIR":"CN","GBS - GF - QUOTATION - NZ - CLIENTS RATES":"NZ","GBS - GF - DOC MGT - NZ - CUST SERV":"NZ","GBS - GF - DEP ARV SOB - VN - EXPORT SEA":"VN","GBS - GF - GIN E5 - VN - EXPORT SEA":"VN","GBS - GF - DHR E13 - US - IMPORT SEA":"US","GBS - GF - PO RECON - CUST SERV":"DIVISION","GBS - GF - SALES FORCE - GLOBAL - POST SALES":"DIVISION","GBS - GF - PO RECON - NZ - CUST SERV":"NZ","GBS - GF - DEP ARV SOB - SH - EXPORT SEA":"SH","GBS - GF - PVH - AU - CUST SERV":"AU","GBS - GF - PO RECON ADIDAS - AU - CUST SERV":"AU","GBS - GF - DOCS ADIDAS - AU - CUST SERV":"AU","GBS - GF - DEP ARV SOB - SZ - EXPORT SEA":"SZ","GBS - GF - GIN E5 - US - EXPORT SEA":"US","GBS - GF - EMERSON MILE - GLOBAL":"DIVISION","GBS - GF - MILE E6 E8 (ATD & ATA) - HK - IMPORT AIR":"HK","GBS - GF - GOU - CA - IMPORT SEA":"CA","GBS - GF - GOU - US - IMPORT SEA":"US","GBS - GF - IRP E3 - CA - EXPORT AIR":"CA","GBS - GF - MILE E6 E8 (ATD & ATA) - SG - IMPORT AIR":"SG","GBS - GF - IRP E3 - US - EXPORT AIR":"US","GBS - GF - IRP E3 - US - EXPORT SEA":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - AU - IMPORT AIR":"AU","GBS - GF - DHR E13 - UK - IMPORT SEA":"UK","GBS - GF - MILE A&F - US - IMPORT SEA":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - CA - EXPORT AIR":"CA","GBS - GF - MILE E6 E8 (ATD & ATA) - CA - EXPORT SEA":"CA","GBS - GF - MILE E6 E8 (ATD & ATA) - CA - IMPORT AIR":"CA","GBS - GF - MILE E6 E8 (ATD & ATA) - CA - IMPORT SEA":"CA","GBS - GF - MILE E6 E8 (ATD & ATA) - US - EXPORT AIR":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - US - EXPORT SEA":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - US - IMPORT AIR":"US","GBS - GF - MILE E6 E8 (ATD & ATA) - US - IMPORT SEA":"US","GBS - GF - MILE VSCO - US - IMPORT SEA":"US","GBS - GF - POD E10 - US - IMPORT AIR":"US","GBS - GF - POD E10 - US - IMPORT SEA":"US","GBS - GF - QBOOK - US - EXPORT SEA":"US","GBS - GF - REG - CA - IMPORT AIR":"CA","GBS - GF - PO RECON MD STAR - AU - CUST SERV":"AU","GBS - GF - TEMPERZONE - NZ - CUST SERV":"NZ","GBS - GF - CLIENT RATE - CLIENTS RATES":"DIVISION","GBS - GF - PO CREATION - NZ - CUST SERV":"NZ","GBS - GF - PVH - HK - CUST SERV":"HK","GBS - GF - ADIDAS FCX CONSOLIDATION - AU - CUST SERV":"AU","GBS - GF - VAT - CN - POST SALES":"CN","GBS - GF - REG - US - IMPORT AIR":"US","GBS - GF - TEMPERZONE - AU - CUST SERV":"AU","GBS - GF - GP MARGIN RPT - GLOBAL - REPORT":"DIVISION","GBS - GF - EMERSON RATE EXCHANGE - GLOBAL":"DIVISION","GBS - GF - SAILING SCHED - US - EXPORT SEA":"US","GBS - GF - REG - SG - IMPORT AIR":"SG","GBS - GF - TRS - US - EXPORT SEA":"US","GBS - GF - VAL - SG - IMPORT AIR":"SG","GBS - GF - VAL - CA - IMPORT AIR":"CA","GBS - GF - VAL - US - IMPORT AIR":"US","GBS - GF - VAL - US - IMPORT SEA":"US","GBS - GF - GBSPEN.CSOPS":"DIVISION","GBS - GF - HALLMARK RECON - NL - CUST SERV":"NL","GBS - GF - WHARF GATE OUT - US - MILESTONE":"US","GBS - GF - PREPARING CUSTOMS FORM - MY":"MY","GBS - GF - BT & ST JOB INV ENTRY - NZ - CUSTOMS":"NZ","GBS – GF – INV – CN BILLING":"CN","GBS - GF - MY - BT JOB REG - CUSTOMS":"MY","GBS - GF - ARN - AU - IMPORT SEA":"AU","GBS - GF - FC - CN SH":"CN","GBS - GF - FC - CN NB":"CN","GBS - GF - VAL - NZ - IMPORT SEA":"NZ","GBS - GF - FC - CN SZ":"CN","GBS - GF - REG - NZ - IMPORT SEA":"NZ","GBS - GF - EDO - AU - IMPORT SEA":"AU","GBS – GF – INV – MY BILLING":"MY","GBS - GF - BT JOB REG - NZ - CUSTOMS":"NZ","GBS – GF – INV – SYD & BNE BILLING":"AU","GBS – GF – INV – MEL BILLING":"AU","GBS - GF - POD - NZ - IMPORT SEA":"NZ","GBS - GF - EDO - NZ - IMPORT SEA":"NZ","GBS – GF – INV – US BILLING":"US","GBS - GF - FC - KR ACCRUAL":"KR","GBS - GF - OUTTURN - AU - IMPORT SEA":"AU","GBS – GF – INV – NZ BILLING":"NZ","GBS – GF – INV – SG SEA BILLING":"SG","GBS - GF - REG - NZ - IMPORT AIR":"NZ","GBS - GF - REG - AU - IMPORT AIR":"AU","GBS - GF - VAL - AU - IMPORT SEA":"AU","GBS - GF - ARN - NZ - IMPORT SEA":"NZ","GBS - GF - REG - AU - IMPORT SEA":"AU","GBS - GF - VAL - AU - IMPORT AIR":"AU","GBS - GF - TRS - NZ - IMPORT SEA":"NZ","GBS - GF - TAX INV - AU - IMPORT SEA":"AU","GBS - GF - E5 - WHARF GATE - IN DATE - NZ IMPORT":"NZ","GBS - GF - NZ - ST JOB PROCESSING - CUSTOMS":"NZ","GBS - GF - FC - CN SZ SIV":"CN","GBS - GF - VAL - NZ - IMPORT AIR":"NZ","GBS - GF - FC - NZ SISTER BILLING":"NZ","GBS - GF - EXPORT - NZ - CUSTOMS":"NZ","GBS - GF - REG - KR - IMPORT SEA":"KR","GBS - GF - OUTTURN - NZ - IMPORT SEA":"NZ","GBS - GF - BROKERAGE COMPLIANCE - AU - SEA IMPORT":"AU","GBS - GF - REG - SG - IMPORT SEA":"SG","GBS – GF – INV – SG AIR BILLING":"SG","GBS - GF - FC - NZ FC":"NZ","GBS - GF - FC - NZ INCOMPLETE":"NZ","GBS - GF - REG - HK - IMPORT AIR":"HK","GBS - GF - STR - NZ - IMPORT SEA":"NZ","GBS - GF - GATE IN DATE (E5) - NZ - IMPORT SEA":"NZ","GBS - GF - BLANK BILLING - NZ - SEA IMPORT":"NZ","GBS - GF - BLANK BILLING - NZ - AIR IMPORT":"NZ","GBS - GF - E10 - DELIVERY DATE IF IMPORT BROKER IS TOLL - NZ IMPORT":"NZ","GBS - GF - GTP E - DOCS - AU - IMPORT AIR":"AU","GBS - GF - SCAC - AU - SEA IMPORT":"AU","GBS - GF - TRS - AU - IMPORT SEA":"AU","GBS - GF - FC - AU ACCRUAL":"AU","GBS - GF - FREIGHT COST - NZ - IMPORT SEA":"NZ","GBS - GF - FREIGHT COST - MY - IMPORT SEA":"MY","GBS - GF - FREIGHT COST - CN - IMPORT SEA":"CN","GBS - GF - CUSTOM E - DOCS - NZ - CUSTOMS":"NZ","GBS - GF - FREIGHT COST - AU - IMPORT SEA":"AU","GBS - GF - FREIGHT COST - KR - IMPORT SEA":"KR","GBS - GF - VAL - HK - IMPORT AIR":"HK","GBS - GF - REG - HK - IMPORT SEA":"HK","GBS - GF - VAL - HK - IMPORT SEA":"HK","GBS – GF – INV – DE BILLING":"DE","GBS - GF - VAL - GZ - IMPORT AIR":"CN","GBS - GF - VAL - GZ - IMPORT SEA":"CN","GBS - GF - VAL - SG - IMPORT SEA":"SG","GBS – GF – INV – HKG BILLING":"HK","GBS - GF - INTERIM RECEIPT - NZ - IMPORT SEA":"NZ","GBS - GF - FC - MY ACCRUAL":"MY","GBS - GF - REG - GZ - IMPORT SEA":"CN","GBS - GF - FC - US FEDEX ACCRUAL":"US","GBS - GF - VSL UPDATE - EMEA SEA":"EMEA","GBS - GF - WTR & XRAY - DE - EXPORT AIR":"DE"});
+const assignmentGroupMapKey = group => norm(group).replace(/\s+/g, ' ')
+  .replace(/\s*-\s*/g, ' - ').toUpperCase();
+const fteCountryForAssignmentGroup = group =>
+  FTE_COUNTRY_BY_ASSIGNMENT_GROUP[assignmentGroupMapKey(group)] || '';
 const regionOf = (g, country = '') => {
   const text = g || '';
   const m = REGION_RE.exec(text);
   // EMEA is a routing umbrella; its country field is more useful for the
   // Quick Booking region cards whenever the source export supplies one.
   if (m) return m[1] === 'EMEA' && String(country).trim()
-    ? String(country).trim().toUpperCase() : m[1];
+    ? countryCodeOf(country) : m[1];
   const fallback = REGION_FALLBACK_RE.exec(text);
-  return fallback ? fallback[1].toUpperCase() : 'Other';
+  if (fallback) return fallback[1].toUpperCase();
+  // With no country and no detectable region, use the maintained FTE Country
+  // mapping instead of inferring a value from arbitrary assignment-group text.
+  return fteCountryForAssignmentGroup(g) || 'Other';
 };
 
 function renderGroupSubMatrix() {
