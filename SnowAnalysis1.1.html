@@ -48,14 +48,14 @@ window.GBS_BASELINE = {"cat": {"Registration": [5, 15], "Validation": [5, 15], "
 // ═══════════════════════════════════════════════════════════════════════════
 
 // 8: same consol + different assignment group is no longer a duplicate.
-// 10: country retained on parent rows so EMEA Quick Booking work can be
-//     analyzed at country level.
+// 11: country and reason retained on parent rows so Shipment Analysis can
+//     analyse geography and the source-provided reason without loading email.
 // 9: consol-level fan-out table (cross-team analytics revived without
 //    touching v8 duplicate semantics); \x1f list separators; n_cats
 //    populated; basis majority vote; robust opened_at / time_worked
 //    parsing; hardened CSV import (canonical headers, dedup); dup_group
 //    re-rolled on load/merge; exclusions synced DB <-> localStorage.
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 // Duplicate detection thresholds
 const SD_THRESHOLD = 0.8;
@@ -73,7 +73,7 @@ const LARGE_DATASET_ROW_LIMIT = 150000;
 const LARGE_CSV_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_GLOBAL_SHIPMENT_HOTSPOT_ROWS = 120000;
 const MAX_DESCRIPTION_MATCH_SCOPE_ROWS = 150000;
-const SHIPMENT_TABLE_RENDER_LIMIT = 500;
+const SHIPMENT_TABLE_DEFAULT_PER_PAGE = 500;
 
 // ServiceNow closed states — single source of truth for "open now" metrics.
 const CLOSED_STATES = ['Closed Complete', 'Closed Incomplete'];
@@ -374,14 +374,14 @@ const TASKS_DDL = `CREATE TABLE tasks (
   number TEXT, consol_id TEXT, shipment_id TEXT, short_desc TEXT,
   assignment_group TEXT, state TEXT, category TEXT, sub_category TEXT,
   open_from TEXT, country TEXT, email TEXT, mailbox TEXT, opened_at TEXT, assigned_to TEXT,
-  email_comment TEXT, time_worked TEXT
+  email_comment TEXT, time_worked TEXT, reason TEXT
 )`;
 
 const PARENT_DDL = `CREATE TABLE parent (
   number TEXT PRIMARY KEY, consol_key TEXT, agroup TEXT, state TEXT,
   category TEXT, sub_category TEXT, source TEXT, country TEXT, email TEXT, mailbox TEXT,
   opened_at TEXT, opened_ts INTEGER, time_worked INTEGER,
-  short_desc TEXT, sd_norm TEXT, has_content INTEGER DEFAULT 0, assigned_to TEXT,
+  short_desc TEXT, sd_norm TEXT, has_content INTEGER DEFAULT 0, assigned_to TEXT, reason TEXT,
   is_dup INTEGER DEFAULT 0, dup_by TEXT DEFAULT '',
   cluster_id INTEGER, dup_basis TEXT DEFAULT '',
   burst_id INTEGER, burst_kind TEXT DEFAULT ''
@@ -436,12 +436,13 @@ const CSV_HEADER_MAP = {
   opened_at: 'opened_at', opened: 'opened_at',
   assigned_to: 'assigned_to', assignee: 'assigned_to',
   email_comment: 'email_comment',
+  reason: 'reason', close_reason: 'reason', closure_reason: 'reason', resolution_reason: 'reason',
   time_worked: 'time_worked',
 };
 const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'short_desc',
   'assignment_group', 'state', 'category', 'sub_category', 'open_from',
-  'country', 'email', 'mailbox', 'opened_at', 'assigned_to', 'email_comment', 'time_worked'];
-// 16 columns × 50 rows stays well below SQLite's usual 999 bind-variable
+  'country', 'email', 'mailbox', 'opened_at', 'assigned_to', 'email_comment', 'time_worked', 'reason'];
+// 17 columns × 50 rows stays well below SQLite's usual 999 bind-variable
 // limit, while cutting JavaScript → WASM calls by roughly fifty-fold.
 const CSV_INSERT_ROWS = 50;
 
@@ -500,7 +501,7 @@ function normalizeExternalTasks(db, filename) {
     throw new Error('Database has no tasks table to analyse');
   }
   const fields = tableColumns(db, 'tasks');
-  if (CSV_TASK_COLS.filter(c => c !== 'country').every(c => fields.includes(c))) return false;
+  if (CSV_TASK_COLS.filter(c => !['country', 'reason'].includes(c)).every(c => fields.includes(c))) return false;
   if (hasTable(db, '__snow_source_tasks')) {
     throw new Error('Database cannot be normalized because __snow_source_tasks already exists');
   }
@@ -554,19 +555,26 @@ function normalizeExternalTasks(db, filename) {
 // predate the materialized `parent.country` column. Upgrade that one column in
 // place instead of rebuilding every derived table (which needlessly reads the
 // very large email-content payloads back through JavaScript).
-function upgradeParentCountry(db) {
-  if (!hasTable(db, 'parent') || tableColumns(db, 'parent').includes('country')) return false;
-  runSQL(db, 'ALTER TABLE parent ADD COLUMN country TEXT');
-  if (hasTable(db, 'tasks') && tableColumns(db, 'tasks').includes('country')) {
-    runSQL(db, `UPDATE parent
-      SET country = COALESCE((
-        SELECT t.country FROM tasks t
-        WHERE t.number = parent.number
-          AND t.country IS NOT NULL AND TRIM(t.country) != ''
-        LIMIT 1
-      ), '')`);
+function upgradeParentCountryAndReason(db) {
+  if (!hasTable(db, 'parent')) return false;
+  const parentFields = new Set(tableColumns(db, 'parent'));
+  const taskFields = hasTable(db, 'tasks') ? new Set(tableColumns(db, 'tasks')) : new Set();
+  let changed = false;
+  for (const column of ['country', 'reason']) {
+    if (parentFields.has(column)) continue;
+    runSQL(db, `ALTER TABLE parent ADD COLUMN ${column} TEXT`);
+    if (taskFields.has(column)) {
+      runSQL(db, `UPDATE parent
+        SET ${column} = COALESCE((
+          SELECT t.${column} FROM tasks t
+          WHERE t.number = parent.number
+            AND t.${column} IS NOT NULL AND TRIM(t.${column}) != ''
+          LIMIT 1
+        ), '')`);
+    }
+    changed = true;
   }
-  return true;
+  return changed;
 }
 
 // Keep the sql.js/WASM start-up cost out of the first file upload.  The
@@ -735,8 +743,8 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     const parentInsert = db.prepare(`INSERT INTO parent
       (number, consol_key, agroup, state, category, sub_category, source,
        country, email, mailbox, opened_at, opened_ts, time_worked,
-       short_desc, sd_norm, has_content, assigned_to)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       short_desc, sd_norm, has_content, assigned_to, reason)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
     const shipInsert = db.prepare('INSERT INTO ship_link VALUES (?,?)');
     let lastRowId = 0;
@@ -746,7 +754,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     while (true) {
       const rows = queryAll(db, `SELECT rowid AS _rowid, number, consol_id, shipment_id,
         short_desc, assignment_group, state, category, sub_category, open_from,
-        country, email, mailbox, opened_at, assigned_to, time_worked
+        country, email, mailbox, opened_at, assigned_to, time_worked, reason
         FROM tasks WHERE rowid > ? ORDER BY rowid LIMIT ?`, [lastRowId, BATCH_SIZE]);
       if (!rows.length) break;
       for (const r of rows) {
@@ -771,7 +779,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
           norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''),
           source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(),
           norm(r.mailbox || ''), (r.opened_at || '').trim(), openedTs, tw,
-          sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || '')]);
+          sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || '')]);
         parentInsert.step();
         parentInsert.reset();
         for (const sid of splitShipmentIds(r.shipment_id || '')) {
@@ -863,8 +871,8 @@ function buildDerived(db, dbId) {
   const parentInsert = db.prepare(`INSERT INTO parent
     (number, consol_key, agroup, state, category, sub_category, source,
      country, email, mailbox, opened_at, opened_ts, time_worked,
-     short_desc, sd_norm, has_content, assigned_to)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     short_desc, sd_norm, has_content, assigned_to, reason)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   // Process in batches to avoid memory issues
   const BATCH_SIZE = 2000;
@@ -907,7 +915,7 @@ function buildDerived(db, dbId) {
         norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''),
         source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(), norm(r.mailbox || ''),
         (r.opened_at || '').trim(), openedTs, tw,
-        sd, sdNorm, hasContent, norm(r.assigned_to || ''),
+        sd, sdNorm, hasContent, norm(r.assigned_to || ''), norm(r.reason || ''),
       ]);
       parentInsert.step();
       parentInsert.reset();
@@ -951,7 +959,7 @@ function buildDerived(db, dbId) {
         mailbox: norm(r.mailbox || ''), opened_at: (r.opened_at || '').trim(),
         opened_ts: openedTs, time_worked: tw,
         short_desc: sd, sd_norm: sdNorm, has_content: hasContent,
-        assigned_to: norm(r.assigned_to || ''),
+        assigned_to: norm(r.assigned_to || ''), reason: norm(r.reason || ''),
       });
     }
 
@@ -2529,7 +2537,7 @@ function getShipmentAnalysisRows(filters = {}) {
        WHERE sl.sid IS NOT NULL AND sl.sid != ''
        GROUP BY p.number
      )
-     SELECT sl.sid AS shipment_id, p.number, p.state, p.opened_at, p.opened_ts, p.country,
+     SELECT sl.sid AS shipment_id, p.number, p.state, p.reason, p.opened_at, p.opened_ts, p.country,
             p.category, p.sub_category,
             p.time_worked, p.agroup, p.assigned_to, sc.shipment_count,
             (p.time_worked * 1.0 / sc.shipment_count) AS allocated_secs
@@ -2551,6 +2559,7 @@ function shipmentItemsFromRows(rows) {
       category: r.category || '', sub_category: r.sub_category || '',
       description_matched: r.description_matched === true,
       agroup: r.agroup || '', country: norm(r.country || ''), assigned_to: r.assigned_to || '',
+      reason: norm(r.reason || ''),
     });
   }
 
@@ -2560,20 +2569,26 @@ function shipmentItemsFromRows(rows) {
     const latest = tickets[tickets.length - 1];
     const isComplete = s => s.toLowerCase() === 'closed complete';
     const isOnHold = s => s.toLowerCase() === ON_HOLD_STATE.toLowerCase();
+    const isClosedIncomplete = s => s.toLowerCase() === CLOSED_INCOMPLETE_STATE.toLowerCase();
     const single_complete = tickets.length === 1 && isComplete(tickets[0].state);
     const on_hold_then_complete = tickets.length > 1 &&
       tickets.some(t => isOnHold(t.state)) && isComplete(latest.state);
+    const closed_incomplete_then_complete = tickets.length > 1 &&
+      tickets.some(t => isClosedIncomplete(t.state)) && isComplete(latest.state);
     return {
       shipment_id, tickets, ticket_count: tickets.length,
       total_secs: tickets.reduce((sum, t) => sum + t.time_worked, 0),
       // Region follows the most recently opened ticket's assignment group,
       // matching the "latest state" that represents this shipment.
       region: regionOf(latest.agroup, latest.country), assignment_group: latest.agroup || '(unassigned)',
-      latest_state: latest.state, single_complete, on_hold_then_complete,
+      latest_state: latest.state, reason: latest.reason || '', single_complete, on_hold_then_complete,
+      closed_incomplete_then_complete,
       description_matched: tickets.some(ticket => ticket.description_matched),
       description_matched_tickets: tickets.filter(ticket => ticket.description_matched),
       case_type: single_complete ? 'Single Closed Complete'
+        : on_hold_then_complete && closed_incomplete_then_complete ? 'On Hold + Closed Incomplete → Closed Complete'
         : on_hold_then_complete ? 'On Hold → Complete'
+        : closed_incomplete_then_complete ? 'Closed Incomplete → Closed Complete'
         : 'Other sequence',
     };
   }).sort((a, b) => b.total_secs - a.total_secs || a.shipment_id.localeCompare(b.shipment_id));
@@ -2589,7 +2604,13 @@ function medianSecs(values) {
 
 // Shipment effort analysis for the currently selected scope.
 function getQuickBookingShipmentAnalysis(filters = {}) {
-  const items = shipmentItemsFromRows(getShipmentAnalysisRows(filters));
+  const allItems = shipmentItemsFromRows(getShipmentAnalysisRows(filters));
+  // State is a shipment-level choice: match the latest ticket's state after
+  // all tickets have been grouped, rather than removing earlier tickets from
+  // the sequence and distorting its worked time.
+  const items = filters.latest_state
+    ? allItems.filter(item => item.latest_state === filters.latest_state)
+    : allItems;
 
   const summarize = filter => {
     const selected = items.filter(filter);
@@ -2608,24 +2629,22 @@ function getQuickBookingShipmentAnalysis(filters = {}) {
     all: summarize(() => true),
     single_complete: summarize(x => x.single_complete),
     on_hold_then_complete: summarize(x => x.on_hold_then_complete),
-    other: summarize(x => !x.single_complete && !x.on_hold_then_complete),
+    closed_incomplete_then_complete: summarize(x => x.closed_incomplete_then_complete),
+    other: summarize(x => !x.single_complete && !x.on_hold_then_complete && !x.closed_incomplete_then_complete),
     items,
   };
 }
 
-// These rankings use the same shipment-level transition definition as the
-// detailed table. Sub-categories stay paired to their category, avoiding
-// misleading roll-ups where different categories share the same sub-category.
+// These rankings use shipment-level transition definitions. Sub-categories
+// stay paired to their category, avoiding misleading roll-ups where different
+// categories share the same sub-category.
 function getShipmentAnalysisHotspots() {
   const db = getPrimaryDB();
   const rowCount = queryValue(db, `SELECT COUNT(*) FROM parent p
     JOIN ship_link sl ON sl.number = p.number
     WHERE sl.sid IS NOT NULL AND sl.sid != ''`) || 0;
   if (rowCount > MAX_GLOBAL_SHIPMENT_HOTSPOT_ROWS) {
-    const limited = [];
-    limited.limited = true;
-    limited.row_count = rowCount;
-    return limited;
+    return { limited: true, row_count: rowCount, on_hold: [], closed_incomplete: [] };
   }
   const rows = getShipmentAnalysisRows();
   const dimensions = [
@@ -2634,7 +2653,7 @@ function getShipmentAnalysisHotspots() {
       (r.category || '(Uncategorised)') + ' / ' + (r.sub_category || '(Uncategorised)') },
     { key: 'agroup', label: 'Assignment group', value: r => r.agroup || '(Unassigned)' },
   ];
-  return dimensions.map(dimension => {
+  const rankTransition = transitionKey => dimensions.map(dimension => {
     const buckets = new Map();
     for (const row of rows) {
       const label = dimension.value(row);
@@ -2642,7 +2661,7 @@ function getShipmentAnalysisHotspots() {
       buckets.get(label).push(row);
     }
     const entries = [...buckets.entries()].map(([label, bucket]) => {
-      const affected = shipmentItemsFromRows(bucket).filter(item => item.on_hold_then_complete);
+      const affected = shipmentItemsFromRows(bucket).filter(item => item[transitionKey]);
       const values = affected.map(item => item.total_secs);
       return {
         label,
@@ -2653,6 +2672,11 @@ function getShipmentAnalysisHotspots() {
     }).filter(entry => entry.shipments > 0);
     return { key: dimension.key, label: dimension.label, entries };
   });
+  return {
+    limited: false,
+    on_hold: rankTransition('on_hold_then_complete'),
+    closed_incomplete: rankTransition('closed_incomplete_then_complete'),
+  };
 }
 
 // The standard shipment analysis remains strict: it uses only explicit
@@ -2690,7 +2714,7 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
        GROUP BY p.sd_norm
        HAVING COUNT(DISTINCT sl.sid) = 1
      )
-     SELECT p.number, p.state, p.opened_at, p.opened_ts, p.country,
+     SELECT p.number, p.state, p.reason, p.opened_at, p.opened_ts, p.country,
             p.category, p.sub_category, p.time_worked, p.agroup, p.assigned_to,
             p.sd_norm, sl.sid AS shipment_id, sc.shipment_count,
             dc.inferred_shipment_id,
@@ -2711,7 +2735,10 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
     shipment_count: 1,
     description_matched: true,
   }));
-  const items = shipmentItemsFromRows([...explicitRows, ...inferredRows]);
+  const allItems = shipmentItemsFromRows([...explicitRows, ...inferredRows]);
+  const items = filters.latest_state
+    ? allItems.filter(item => item.latest_state === filters.latest_state)
+    : allItems;
   const matchedItems = items.filter(item => item.description_matched);
   const summarize = selected => {
     const values = selected.map(item => item.total_secs);
@@ -2741,7 +2768,7 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
 function getShipmentAnalysisOptions() {
   const db = getPrimaryDB();
   return queryAll(db,
-    `SELECT DISTINCT p.category, p.sub_category, p.agroup
+    `SELECT DISTINCT p.category, p.sub_category, p.agroup, p.state
      FROM parent p JOIN ship_link sl ON sl.number = p.number
      WHERE sl.sid IS NOT NULL AND sl.sid != ''
      ORDER BY p.category, p.sub_category, p.agroup`).map(r => ({
@@ -3656,8 +3683,8 @@ async function processLargeCSVFile(file) {
             return value == null ? '' : String(value);
           };
           const parentStmtFor = n => db.prepare(`INSERT OR IGNORE INTO parent
-            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to)
-            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason)
+            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const childStmtFor = n => db.prepare(`INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const shipStmtFor = n => db.prepare(`INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           runSQL(db, 'BEGIN IMMEDIATE');
@@ -3683,10 +3710,11 @@ async function processLargeCSVFile(file) {
                 parents.push(number, normKey(read(row, 'consol_id')), agroup, state, category,
                   norm(read(row, 'sub_category')), source || '(empty)', norm(read(row, 'country')),
                   read(row, 'email').trim().toLowerCase(), norm(read(row, 'mailbox')), openedAt, openedTs,
-                  timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')));
+                  timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')),
+                  norm(read(row, 'reason')));
                 for (const sid of splitShipmentIds(read(row, 'shipment_id'))) ships.push(sid, number);
               }
-              if (parents.length) { const stmt = parentStmtFor(parents.length / 17); stmt.run(parents); stmt.free(); }
+              if (parents.length) { const stmt = parentStmtFor(parents.length / 18); stmt.run(parents); stmt.free(); }
               if (children.length) { const stmt = childStmtFor(children.length / 12); stmt.run(children); stmt.free(); }
               if (ships.length) { const stmt = shipStmtFor(ships.length / 2); stmt.run(ships); stmt.free(); }
             }
@@ -3821,11 +3849,11 @@ async function processDBFile(file) {
     srcDB = new SQL.Database(fileBytes);
     fileBytes = null;
     const normalizedTasks = normalizeExternalTasks(srcDB, file.name);
-    const needsCountryUpgrade = hasTable(srcDB, 'parent') &&
-      !tableColumns(srcDB, 'parent').includes('country');
-    if (needsCountryUpgrade) {
-      updateProgress('Upgrading', `Adding country data to ${file.name}...`);
-      upgradeParentCountry(srcDB);
+    const needsShipmentColumnUpgrade = hasTable(srcDB, 'parent') &&
+      ['country', 'reason'].some(column => !tableColumns(srcDB, 'parent').includes(column));
+    if (needsShipmentColumnUpgrade) {
+      updateProgress('Upgrading', `Adding shipment analysis fields to ${file.name}...`);
+      upgradeParentCountryAndReason(srcDB);
     }
 
     if (dbEntries.length === 0) {
@@ -4053,7 +4081,9 @@ if (typeof window !== 'undefined') {
 
   /* ── App Layout ── */
   .app { display: flex; height: calc(100vh - 48px); }
-  .sidebar { width: 380px; min-width: 380px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .sidebar { width: 380px; min-width: 380px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width .2s ease, min-width .2s ease, border-color .2s ease; }
+  .app.sidebar-collapsed .sidebar { width: 0; min-width: 0; border-right-color: transparent; pointer-events: none; }
+  .sidebar-toggle { white-space: nowrap; }
   .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); }
   .sidebar-header h1 { font-size: 1.05rem; font-weight: 700; }
   .sidebar-header p { font-size: 0.72rem; color: var(--text3); margin-top: 2px; }
@@ -4077,6 +4107,8 @@ if (typeof window !== 'undefined') {
   .qb-analysis-filter select { min-width: 180px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 0.72rem; font-weight: 500; padding: 5px 24px 5px 7px; }
   .qb-analysis-filter select:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; border-color: var(--blue); }
   .qb-hotspot-section { margin: 12px 0 16px; padding: 13px; border: 1px solid #f0c6c6; border-left: 4px solid var(--red); border-radius: 8px; background: #fffafb; }
+  .qb-incomplete-hotspot { border-color: #f3d9a8; border-left-color: var(--amber); background: #fffdf7; }
+  .qb-incomplete-hotspot .qb-hotspot-heading h4 { color: #986100; }
   .qb-hotspot-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
   .qb-hotspot-heading h4 { color: #8b2525; font-size: 0.82rem; line-height: 1.25; }
   .qb-hotspot-heading .note { margin-top: 2px; }
@@ -4340,6 +4372,8 @@ if (typeof window !== 'undefined') {
   <span style="font-size:0.68rem;color:var(--text3)">For multi-GB exports, load a prepared .db when available.</span>
   <div class="file-list" id="fileList"></div>
   <span class="progress-msg" id="progressMsg"></span>
+  <button class="reset-btn sidebar-toggle" type="button" id="sidebarToggle" style="display:none"
+          aria-controls="sidebar" aria-expanded="true" onclick="toggleSidebar()">☰ Hide sidebar</button>
   <button class="reset-btn" onclick="window.App.exportDatabase()" id="downloadBtn" style="display:none" title="Download processed .db file">&#128190; Download DB</button>
   <button class="reset-btn" onclick="resetAll()" id="resetBtn" style="display:none">&#8635; Reset</button>
 </div>
@@ -4427,7 +4461,30 @@ const fastLoad = document.getElementById('fastLoad');
 const progressEl = document.getElementById('progressMsg');
 const emptyState = document.getElementById('emptyState');
 const sidebar = document.getElementById('sidebar');
+const sidebarToggle = document.getElementById('sidebarToggle');
 const resetBtn = document.getElementById('resetBtn');
+const SIDEBAR_COLLAPSED_KEY = 'snow_sidebar_collapsed';
+
+function setSidebarCollapsed(collapsed) {
+  const app = document.getElementById('appContainer');
+  const shouldCollapse = !!collapsed;
+  app.classList.toggle('sidebar-collapsed', shouldCollapse);
+  sidebar.inert = shouldCollapse;
+  sidebar.setAttribute('aria-hidden', String(shouldCollapse));
+  sidebarToggle.setAttribute('aria-expanded', String(!shouldCollapse));
+  sidebarToggle.textContent = shouldCollapse ? '☰ Show sidebar' : '☰ Hide sidebar';
+  sidebarToggle.title = shouldCollapse ? 'Show filters and navigation' : 'Hide filters and navigation for a wider view';
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(shouldCollapse));
+  if (shouldCollapse && sidebar.contains(document.activeElement)) sidebarToggle.focus();
+  // Charts measure their container width, so resize them after the sidebar's
+  // short transition completes.
+  window.setTimeout(() => window.dispatchEvent(new Event('resize')), 220);
+}
+
+function toggleSidebar() {
+  const app = document.getElementById('appContainer');
+  setSidebarCollapsed(!app.classList.contains('sidebar-collapsed'));
+}
 
 let processing = false;
 
@@ -4537,6 +4594,8 @@ function removeFile(chip, name) {
 function onDataReady() {
   emptyState.style.display = 'none';
   sidebar.style.display = 'flex';
+  sidebarToggle.style.display = 'inline-block';
+  setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
   resetBtn.style.display = 'inline-block';
   document.getElementById('downloadBtn').style.display = 'inline-block';
   // Show the consol list in sidebar (class-based, so tabs can hide it again)
@@ -4570,6 +4629,7 @@ function resetAll() {
   fileList.innerHTML = '';
   progressEl.textContent = '';
   sidebar.style.display = 'none';
+  sidebarToggle.style.display = 'none';
   emptyState.style.display = 'flex';
   resetBtn.style.display = 'none';
   document.getElementById('downloadBtn').style.display = 'none';
@@ -4913,6 +4973,7 @@ async function loadRaw(resetPage) {
   const pages = Math.max(1, Math.ceil(d.total / rawState.per_page));
   const arrow = k => rawState.sort === k ? (rawState.dir === 'asc' ? ' ▲' : ' ▼') : '';
   const focus = rawState.focus;
+  rawState.focus = null;
 
   el.innerHTML =
     '<div class="raw-bar">' +
@@ -4924,7 +4985,7 @@ async function loadRaw(resetPage) {
         [25, 50, 100, 250, 500, 1000].map(n => '<option value="' + n + '"' +
           (n === rawState.per_page ? ' selected' : '') + '>' + n + '</option>').join('') +
       '</select>' +
-      '<button onclick="rawState.filters={};loadRaw(true)">Clear filters</button>' +
+      '<button onclick="rawState.filters={};rawState.focus=null;loadRaw(true)">Clear filters</button>' +
       '<button onclick="rawState.page=Math.max(1,rawState.page-1);loadRaw()"' +
         (rawState.page <= 1 ? ' disabled' : '') + '>&#8592;</button>' +
       '<span>' + rawState.page + ' / ' + pages.toLocaleString() + '</span>' +
@@ -4959,9 +5020,17 @@ async function loadRaw(resetPage) {
   if (focus && focus.key) {
     const again = el.querySelector('.frow input[data-k="' + focus.key + '"]');
     if (again) {
-      again.focus();
-      const caret = Math.min(focus.caret == null ? again.value.length : focus.caret, again.value.length);
-      again.setSelectionRange(caret, caret);
+      requestAnimationFrame(() => {
+        // `rawContent` is replaced on every query. Restore both caret ends
+        // after paint so every raw-data column behaves like a normal input.
+        const current = el.querySelector('.frow input[data-k="' + focus.key + '"]');
+        if (!current) return;
+        current.focus({ preventScroll: true });
+        const limit = current.value.length;
+        const start = Math.min(focus.start == null ? limit : focus.start, limit);
+        const end = Math.min(focus.end == null ? start : focus.end, limit);
+        current.setSelectionRange(start, end, focus.direction || 'none');
+      });
     }
   }
 }
@@ -4978,7 +5047,9 @@ function rawFilter(k, v) {
   const active = document.activeElement;
   rawState.focus = {
     key: k,
-    caret: active && active.dataset && active.dataset.k === k ? active.selectionStart : null,
+    start: active && active.dataset && active.dataset.k === k ? active.selectionStart : null,
+    end: active && active.dataset && active.dataset.k === k ? active.selectionEnd : null,
+    direction: active && active.dataset && active.dataset.k === k ? active.selectionDirection : 'none',
   };
   rawState.filters[k] = v;
   clearTimeout(rawTimer);
@@ -5534,9 +5605,10 @@ function renderBaselineTable() {
 // Quick Booking uses its own table state so filtering or sorting does not
 // cause the rest of the dashboard to rebuild.
 const quickBookingState = {
-  filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', ticket_sequence: '' },
-  analysis: { category: 'Quick Booking', sub_category: '', agroup: '' },
-  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', controlFocus: null,
+  filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
+  analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
+  sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total',
+  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
 let shipmentAnalysisHotspots = null;
@@ -5549,27 +5621,56 @@ const QUICK_BOOKING_COLS = [
   { key: 'ticket_count', label: 'Tickets', num: true },
   { key: 'total_secs', label: 'Total Time Worked', num: true },
   { key: 'latest_state', label: 'Latest State', num: false },
+  { key: 'reason', label: 'Reason', num: false },
   { key: 'ticket_sequence', label: 'Ticket sequence', num: false },
 ];
 
 function quickBookingFilter(key, value) {
-  // Filtering redraws the table. Remember the active input's cursor before
-  // that redraw so the next keystroke continues in the same field.
+  // Filtering redraws the table. Keep both ends of a text selection (not
+  // just the caret) and restore it after the replacement DOM is painted.
+  // This is especially important for the long Ticket sequence filter.
   const active = document.activeElement;
-  const caret = active && active.dataset && active.dataset.qbFilter === key
-    ? active.selectionStart : null;
+  const wasActiveTextFilter = active && active.dataset && active.dataset.qbFilter === key &&
+    typeof active.selectionStart === 'number';
+  const selection = wasActiveTextFilter ? {
+    start: active.selectionStart,
+    end: active.selectionEnd,
+    direction: active.selectionDirection || 'none',
+  } : null;
   quickBookingState.filters[key] = value;
+  quickBookingState.page = 1;
   renderQuickBookingSection();
-  const input = document.querySelector('#quickBookingSection [data-qb-filter="' + key + '"]');
-  if (input) {
-    input.focus();
-    if (caret != null) input.setSelectionRange(caret, caret);
-  }
+  if (!selection) return;
+  requestAnimationFrame(() => {
+    const input = document.querySelector('#quickBookingSection [data-qb-filter="' + key + '"]');
+    if (!input || input.tagName !== 'INPUT') return;
+    input.focus({ preventScroll: true });
+    const limit = input.value.length;
+    input.setSelectionRange(Math.min(selection.start, limit), Math.min(selection.end, limit), selection.direction);
+  });
 }
 
 function sortQuickBooking(key) {
   if (quickBookingState.sort === key) quickBookingState.dir = quickBookingState.dir === 'asc' ? 'desc' : 'asc';
   else { quickBookingState.sort = key; quickBookingState.dir = key === 'ticket_count' || key === 'total_secs' ? 'desc' : 'asc'; }
+  renderQuickBookingSection();
+}
+
+function quickBookingPage(page) {
+  quickBookingState.page = Math.max(1, Number(page) || 1);
+  renderQuickBookingSection();
+}
+
+function quickBookingPerPage(value) {
+  quickBookingState.perPage = [100, 250, 500, 1000].includes(Number(value))
+    ? Number(value) : SHIPMENT_TABLE_DEFAULT_PER_PAGE;
+  quickBookingState.page = 1;
+  renderQuickBookingSection();
+}
+
+function clearQuickBookingTableFilters() {
+  Object.keys(quickBookingState.filters).forEach(key => { quickBookingState.filters[key] = ''; });
+  quickBookingState.page = 1;
   renderQuickBookingSection();
 }
 
@@ -5601,6 +5702,7 @@ function shipmentAnalysisFilter(key, value) {
   } else if (key === 'sub_category') {
     quickBookingState.analysis.agroup = '';
   }
+  quickBookingState.page = 1;
   renderQuickBookingSection();
 }
 
@@ -5660,8 +5762,9 @@ function renderQuickBookingSection() {
       region: x.region, shipments: 0, tickets: 0, total_secs: 0,
       single_shipments: 0, single_secs: 0,
       on_hold_complete_shipments: 0, on_hold_complete_secs: 0,
+      closed_incomplete_complete_shipments: 0, closed_incomplete_complete_secs: 0,
       other_shipments: 0, other_secs: 0,
-      values: [], single_values: [], on_hold_complete_values: [], other_values: [],
+      values: [], single_values: [], on_hold_complete_values: [], closed_incomplete_complete_values: [], other_values: [],
     };
     r.shipments++;
     r.tickets += x.ticket_count;
@@ -5677,7 +5780,12 @@ function renderQuickBookingSection() {
       r.on_hold_complete_secs += x.total_secs;
       r.on_hold_complete_values.push(x.total_secs);
     }
-    if (!x.single_complete && !x.on_hold_then_complete) {
+    if (x.closed_incomplete_then_complete) {
+      r.closed_incomplete_complete_shipments++;
+      r.closed_incomplete_complete_secs += x.total_secs;
+      r.closed_incomplete_complete_values.push(x.total_secs);
+    }
+    if (!x.single_complete && !x.on_hold_then_complete && !x.closed_incomplete_then_complete) {
       r.other_shipments++;
       r.other_secs += x.total_secs;
       r.other_values.push(x.total_secs);
@@ -5700,13 +5808,16 @@ function renderQuickBookingSection() {
   };
   const regionCards = [...regionTotals.values()].sort((a, b) => b.total_secs - a.total_secs || a.region.localeCompare(b.region)).map(r =>
     '<div class="kpi info"><div class="kpi-label">Region · ' + escHTML(r.region) + '</div>' +
-      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:5px 0 7px">' +
+      '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:5px 0 7px">' +
         '<div><div class="kpi-label" style="font-size:0.62rem">Single Closed Complete</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.single_values, r.single_secs, r.single_shipments) + '</div>' +
           '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.single_shipments + ' shipments</div></div>' +
         '<div><div class="kpi-label" style="font-size:0.62rem">On Hold → Complete</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.on_hold_complete_values, r.on_hold_complete_secs, r.on_hold_complete_shipments) + '</div>' +
           '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.on_hold_complete_shipments + ' shipments</div></div>' +
+        '<div><div class="kpi-label" style="font-size:0.62rem">Closed Incomplete → Closed Complete</div>' +
+          '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(r.closed_incomplete_complete_values, r.closed_incomplete_complete_secs, r.closed_incomplete_complete_shipments) + '</div>' +
+          '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' · ' + r.closed_incomplete_complete_shipments + ' shipments</div></div>' +
         '<div><div class="kpi-label" style="font-size:0.62rem">Median: Other sequences</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMedian(r.other_values) + '</div>' +
           '<div class="kpi-sub">median · ' + r.other_shipments + ' shipments</div></div>' +
@@ -5715,21 +5826,27 @@ function renderQuickBookingSection() {
         'total: ' + time(r.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
         regionMetric(r.values, r.total_secs, r.shipments) + '</div></div>').join('');
 
-  const tableItems = visibleItems.slice(0, SHIPMENT_TABLE_RENDER_LIMIT);
-  const rows = tableItems.map(x => {
+  const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
+  if (state.page > totalPages) state.page = totalPages;
+  const pageStart = (state.page - 1) * state.perPage;
+  const tableItems = visibleItems.slice(pageStart, pageStart + state.perPage);
+  const rows = tableItems.map((x, index) => {
     const tag = x.single_complete ? '<span class="b-verified">single completed</span>'
+      : x.on_hold_then_complete && x.closed_incomplete_then_complete ? '<span class="p-rapid">on hold + closed incomplete → completed</span>'
       : x.on_hold_then_complete ? '<span class="p-rapid">on hold → completed</span>'
+      : x.closed_incomplete_then_complete ? '<span class="b-unverified">closed incomplete → completed</span>'
       : '<span class="b-unverified">other</span>';
     const tickets = x.tickets.map(t =>
       '<div style="white-space:nowrap">' + escHTML(t.number) + ' · ' +
       escHTML(t.state || 'No state') + ' · ' + escHTML(t.opened_at || 'No opened date') +
       ' · ' + time(t.time_worked) + '</div>').join('');
-    return '<tr><td>' + escHTML(x.region) + '</td><td>' + escHTML(x.assignment_group) + '</td>' +
+    return '<tr><td class="num">' + (pageStart + index + 1).toLocaleString() + '</td><td>' + escHTML(x.region) + '</td><td>' + escHTML(x.assignment_group) + '</td>' +
       '<td><b>' + escHTML(x.shipment_id) + '</b></td>' +
       '<td>' + tag + '</td><td class="num">' + x.ticket_count + '</td>' +
       '<td class="num"><b>' + time(x.total_secs) + '</b></td>' +
-      '<td>' + escHTML(x.latest_state || '—') + '</td><td style="font-size:0.7rem">' + tickets + '</td></tr>';
-  }).join('') || '<tr><td colspan="8" style="color:var(--text3)">No Quick Booking shipments match these filters.</td></tr>';
+      '<td>' + escHTML(x.latest_state || '—') + '</td><td>' + escHTML(x.reason || '—') + '</td>' +
+      '<td style="font-size:0.7rem">' + tickets + '</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="color:var(--text3)">No shipments match these filters.</td></tr>';
 
   const headers = QUICK_BOOKING_COLS.map(c => {
     const active = state.sort === c.key;
@@ -5743,7 +5860,7 @@ function renderQuickBookingSection() {
       '<option value="">All</option>' + values.map(v => '<option value="' + attr(v) + '"' +
         (state.filters[key] === v ? ' selected' : '') + '>' + escHTML(v) + '</option>').join('') + '</select>';
   };
-  const filters = QUICK_BOOKING_COLS.map(c => {
+  const filters = '<th></th>' + QUICK_BOOKING_COLS.map(c => {
     if (c.key === 'case_type' || c.key === 'latest_state') {
       return '<th class="' + (c.num ? 'num' : '') + '">' + dropdownFilter(c.key) + '</th>';
     }
@@ -5762,6 +5879,11 @@ function renderQuickBookingSection() {
   const groupRows = analysis.sub_category
     ? categoryRows.filter(r => r.sub_category === analysis.sub_category) : categoryRows;
   const assignmentGroups = uniqueValues('agroup', groupRows);
+  const stateRows = shipmentAnalysisOptions.filter(row =>
+    (!analysis.category || row.category === analysis.category) &&
+    (!analysis.sub_category || row.sub_category === analysis.sub_category) &&
+    (!analysis.agroup || row.agroup === analysis.agroup));
+  const latestStates = uniqueValues('state', stateRows);
   const analysisSelect = (key, label, allLabel, values) =>
     '<label class="qb-analysis-filter"><span>' + label + '</span><select onchange="shipmentAnalysisFilter(\'' + key + '\', this.value)">' +
       '<option value="">All ' + allLabel + '</option>' +
@@ -5771,6 +5893,7 @@ function renderQuickBookingSection() {
     analysisSelect('category', 'Category', 'categories', categories) +
     analysisSelect('sub_category', 'Sub-category', 'sub-categories', subCategories) +
     analysisSelect('agroup', 'Assignment group', 'assignment groups', assignmentGroups) +
+    analysisSelect('latest_state', 'Latest state', 'latest states', latestStates) +
     '</div>';
   const segmentedControl = (id, label, options, active, handler) =>
     '<div class="qb-control" data-qb-control="' + id + '" role="group" aria-label="' + label + '">' +
@@ -5788,7 +5911,7 @@ function renderQuickBookingSection() {
   const hotspotSortControl = segmentedControl('hotspots', 'Rank by', [
     { value: 'total', label: 'Total time' }, { value: 'median', label: 'Median time' },
   ], quickBookingState.hotspotSort, 'quickBookingHotspotSort');
-  const hotspotPanels = shipmentAnalysisHotspots.map(dimension => {
+  const hotspotPanels = dimensions => dimensions.map(dimension => {
     const entries = [...dimension.entries].sort((a, b) => {
       const main = quickBookingState.hotspotSort === 'median'
         ? b.median_secs - a.median_secs : b.total_secs - a.total_secs;
@@ -5804,14 +5927,20 @@ function renderQuickBookingSection() {
       '<li><span class="qb-hotspot-name">No matching transitions</span></li>';
     return '<div class="qb-hotspot-panel"><h5>' + escHTML(dimension.label) + '</h5><ol class="qb-hotspot-list">' + rows + '</ol></div>';
   }).join('');
-  const hotspotGrid = shipmentAnalysisHotspots.limited
-    ? '<div class="note">This file has ' + shipmentAnalysisHotspots.row_count.toLocaleString() +
-      ' shipment-linked rows. Narrow the shipment scope below before running the detailed analysis; global hotspot rankings are paused to keep the page responsive.</div>'
-    : '<div class="qb-hotspot-grid">' + hotspotPanels + '</div>';
-  const hotspotSection = '<section class="qb-hotspot-section" aria-label="On Hold to Complete hotspots">' +
-    '<div class="qb-hotspot-heading"><div><h4>On Hold → Complete hotspots</h4>' +
-      '<div class="note">All shipment-linked data. Rankings use only multi-ticket shipments that finish Closed Complete after at least one On Hold ticket. Each row shows total time, median time, and affected shipments.</div></div>' +
-      hotspotSortControl + '</div>' + hotspotGrid + '</section>';
+  const hotspotGrid = dimensions => '<div class="qb-hotspot-grid">' + hotspotPanels(dimensions) + '</div>';
+  const hotspotSection = shipmentAnalysisHotspots.limited
+    ? '<section class="qb-hotspot-section" aria-label="Shipment transition hotspots">' +
+      '<div class="note">This file has ' + shipmentAnalysisHotspots.row_count.toLocaleString() +
+      ' shipment-linked rows. Narrow the shipment scope below before running the detailed analysis; global hotspot rankings are paused to keep the page responsive.</div></section>'
+    : '<div class="qb-controls" style="margin-bottom:4px">' + hotspotSortControl + '</div>' +
+      '<section class="qb-hotspot-section" aria-label="On Hold to Complete hotspots">' +
+        '<div class="qb-hotspot-heading"><div><h4>On Hold → Complete hotspots</h4>' +
+          '<div class="note">All shipment-linked data. Multi-ticket shipments whose latest ticket is Closed Complete after at least one On Hold ticket. Each row shows total time, median time, and affected shipments.</div></div></div>' +
+        hotspotGrid(shipmentAnalysisHotspots.on_hold) + '</section>' +
+      '<section class="qb-hotspot-section qb-incomplete-hotspot" aria-label="Closed Incomplete to Closed Complete hotspots">' +
+        '<div class="qb-hotspot-heading"><div><h4>Closed Incomplete → Closed Complete hotspots</h4>' +
+          '<div class="note">All shipment-linked data. Multi-ticket shipments whose latest ticket is Closed Complete after at least one Closed Incomplete ticket. Each row shows total time, median time, and affected shipments.</div></div></div>' +
+        hotspotGrid(shipmentAnalysisHotspots.closed_incomplete) + '</section>';
   const descriptionMatchedTransitions = descriptionMatchedData.items
     .filter(item => item.on_hold_then_complete)
     .sort((a, b) => b.total_secs - a.total_secs || a.shipment_id.localeCompare(b.shipment_id));
@@ -5852,7 +5981,7 @@ function renderQuickBookingSection() {
       '</tr></thead><tbody>' + descriptionMatchRows + '</tbody></table></div></section>';
 
   el.innerHTML = '<div class="chart-grid"><div class="chart-card full"><h3>Shipment Effort Analysis</h3>' +
-    '<div class="note">Choose a category, sub-category, or assignment group to analyse the shipment-linked tickets in that scope. ' +
+    '<div class="note">Choose a category, sub-category, assignment group, or latest state to analyse the shipment-linked tickets in that scope. ' +
     'Each shipment ID groups its selected tickets and sums their logged <b>Time Worked</b>. ' +
     '“Finally completed” means the latest ticket by <b>opened-at</b> is Closed Complete; the source has no close timestamp. ' +
     'When one job has multiple shipment IDs, its logged time is divided evenly across those unique shipments before all totals and averages are calculated.</div>' +
@@ -5864,14 +5993,22 @@ function renderQuickBookingSection() {
       summaryCard(metricLabel + ': all shipments', data.all, 'info', 'total ' + time(data.all.total_secs)) +
       summaryCard(metricLabel + ': Single Closed Complete', data.single_complete, 'green', 'one ticket only') +
       summaryCard(metricLabel + ': On Hold → Complete', data.on_hold_then_complete, 'danger', 'multi-ticket sequence') +
+      summaryCard(metricLabel + ': Closed Incomplete → Closed Complete', data.closed_incomplete_then_complete, 'warn', 'multi-ticket sequence') +
       summaryCard(metricLabel + ': Other sequences', data.other, 'warn', '') +
     '</div>' +
     '<div class="note" style="margin-top:10px">Region is taken from the assignment group of the shipment&apos;s latest opened ticket. Region cards reflect the table filters.</div>' +
     '<div class="kpi-row" style="margin-top:10px">' + regionCards + '</div>' +
-    '<div class="filter-meta"><span>' + Math.min(visibleItems.length, SHIPMENT_TABLE_RENDER_LIMIT).toLocaleString() +
-      ' of ' + visibleItems.length.toLocaleString() + ' matching shipments rendered (' + items.length.toLocaleString() + ' in scope)</span>' +
-      '<button onclick="Object.keys(quickBookingState.filters).forEach(k => quickBookingState.filters[k] = \'\');renderQuickBookingSection()">Clear filters</button></div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr>' + headers + '</tr><tr>' + filters +
+    '<div class="filter-meta"><span>' + (visibleItems.length ? (pageStart + 1).toLocaleString() + '–' +
+      Math.min(pageStart + state.perPage, visibleItems.length).toLocaleString() : '0') +
+      ' of ' + visibleItems.length.toLocaleString() + ' matching shipments (' + items.length.toLocaleString() + ' in analysis scope)</span>' +
+      '<label style="display:flex;align-items:center;gap:4px">Rows <select aria-label="Rows per page" onchange="quickBookingPerPage(this.value)">' +
+        [100, 250, 500, 1000].map(n => '<option value="' + n + '"' + (state.perPage === n ? ' selected' : '') + '>' + n + '</option>').join('') +
+      '</select></label>' +
+      '<button onclick="quickBookingPage(' + (state.page - 1) + ')"' + (state.page <= 1 ? ' disabled' : '') + '>← Prev</button>' +
+      '<span>Page ' + state.page.toLocaleString() + ' of ' + totalPages.toLocaleString() + '</span>' +
+      '<button onclick="quickBookingPage(' + (state.page + 1) + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>Next →</button>' +
+      '<button onclick="clearQuickBookingTableFilters()">Clear filters</button></div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">#</th>' + headers + '</tr><tr>' + filters +
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
   if (quickBookingState.controlFocus) {
     const focused = el.querySelector('[data-qb-control="' + quickBookingState.controlFocus + '"] button.active');
