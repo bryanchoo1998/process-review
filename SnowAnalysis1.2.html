@@ -4335,6 +4335,10 @@ if (typeof window !== 'undefined') {
   .qb-category-region .volume-cell { min-width: 112px; text-align: center; }
   .qb-category-region .volume-cell b { display: block; color: var(--blue); font-size: .78rem; }
   .qb-category-region .volume-cell span { display: block; margin-top: 1px; color: var(--text3); font-size: .62rem; }
+  .qb-category-region .gtable th:first-child { position: sticky; left: 0; z-index: 3; background: var(--surface2); min-width: 190px; }
+  .qb-category-region .gtable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; }
+  .qb-category-region .gtable tfoot td { background: var(--surface2); border-top: 2px solid var(--border); }
+  .qb-category-region .gtable tfoot td:first-child { z-index: 2; background: var(--surface2); }
 
   .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; }
@@ -6123,9 +6127,13 @@ function renderQuickBookingSection() {
     }), { shipments: 0, tickets: 0 });
     return { category, byRegion, total };
   }).sort((a, b) => b.total.shipments - a.total.shipments || b.total.tickets - a.total.tickets || a.category.localeCompare(b.category));
+  const categoryRegionTotals = {
+    shipments: visibleItems.length,
+    tickets: visibleItems.reduce((sum, item) => sum + item.ticket_count, 0),
+  };
   const categoryRegionSection = '<div class="chart-grid qb-category-region"><div class="chart-card full">' +
     '<h3>Shipment and ticket volume · Category × Region</h3>' +
-    '<div class="note">Each cell shows distinct shipments, then tickets. A shipment is counted once per category/region cell even if it contains multiple tickets in that category. This view follows the current Shipment Analysis scope and table filters.</div>' +
+    '<div class="note">Each cell shows distinct shipments, then tickets. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region. This view follows the current Shipment Analysis scope and table filters.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Category</th>' +
       categoryRegions.map(region => '<th class="num">' + escHTML(region) + '</th>').join('') +
       '<th class="num">Total</th></tr></thead><tbody>' +
@@ -6138,7 +6146,14 @@ function renderQuickBookingSection() {
         '<td class="volume-cell"><b>' + row.total.shipments.toLocaleString() + ' shipments</b><span>' +
           row.total.tickets.toLocaleString() + ' tickets</span></td></tr>').join('') ||
         '<tr><td colspan="' + (categoryRegions.length + 2) + '" style="color:var(--text3)">No shipment categories match the current filters.</td></tr>') +
-      '</tbody></table></div></div></div>';
+      '</tbody><tfoot><tr><td><b>Total</b></td>' +
+        categoryRegions.map(region => {
+          const total = regionTotals.get(region) || { shipments: 0, tickets: 0 };
+          return '<td class="volume-cell"><b>' + total.shipments.toLocaleString() + ' shipments</b><span>' +
+            total.tickets.toLocaleString() + ' tickets</span></td>';
+        }).join('') +
+        '<td class="volume-cell"><b>' + categoryRegionTotals.shipments.toLocaleString() + ' shipments</b><span>' +
+          categoryRegionTotals.tickets.toLocaleString() + ' tickets</span></td></tr></tfoot></table></div></div></div>';
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
   if (state.page > totalPages) state.page = totalPages;
