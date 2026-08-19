@@ -50,12 +50,13 @@ window.GBS_BASELINE = {"cat": {"Registration": [5, 15], "Validation": [5, 15], "
 // 8: same consol + different assignment group is no longer a duplicate.
 // 11: country and reason retained on parent rows so Shipment Analysis can
 //     analyse geography and the source-provided reason without loading email.
+// 12: blank Quick Booking shipment IDs fall back to the Quick Booking ID.
 // 9: consol-level fan-out table (cross-team analytics revived without
 //    touching v8 duplicate semantics); \x1f list separators; n_cats
 //    populated; basis majority vote; robust opened_at / time_worked
 //    parsing; hardened CSV import (canonical headers, dedup); dup_group
 //    re-rolled on load/merge; exclusions synced DB <-> localStorage.
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // Duplicate detection thresholds
 const SD_THRESHOLD = 0.8;
@@ -182,6 +183,17 @@ function splitShipmentIds(raw) {
     }
   }
   return ids;
+}
+
+// Quick Booking exports sometimes leave Shipment ID blank while supplying a
+// Quick Booking ID. Keep that identifier intact (even when it does not match
+// the normal shipment-number pattern) so the related tickets remain analyzable.
+function shipmentKeysForTask(shipmentId, category, quickBookingId) {
+  const shipmentIds = splitShipmentIds(shipmentId);
+  if (shipmentIds.length || norm(category).toLowerCase() !== 'quick booking') return shipmentIds;
+  return [...new Set(String(quickBookingId || '').split(SHIP_SPLIT_RE)
+    .map(value => normKey(value).replace(/^['"]+|['"]+$/g, ''))
+    .filter(value => value && !SHIP_STOPWORDS.has(value.toLowerCase())))];
 }
 
 function extractKeywords(text) {
@@ -371,7 +383,7 @@ function saveExcluded() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const TASKS_DDL = `CREATE TABLE tasks (
-  number TEXT, consol_id TEXT, shipment_id TEXT, short_desc TEXT,
+  number TEXT, consol_id TEXT, shipment_id TEXT, quick_booking_id TEXT, short_desc TEXT,
   assignment_group TEXT, state TEXT, category TEXT, sub_category TEXT,
   open_from TEXT, country TEXT, email TEXT, mailbox TEXT, opened_at TEXT, assigned_to TEXT,
   email_comment TEXT, time_worked TEXT, reason TEXT
@@ -429,6 +441,7 @@ const CSV_HEADER_MAP = {
   task_id: 'number', record_id: 'number', id: 'number',
   consol_id: 'consol_id', consol: 'consol_id', consol_no: 'consol_id',
   shipment_id: 'shipment_id', shipment: 'shipment_id',
+  quick_booking_id: 'quick_booking_id', quickbooking_id: 'quick_booking_id',
   short_desc: 'short_desc', short_description: 'short_desc', description: 'short_desc',
   assignment_group: 'assignment_group', group: 'assignment_group',
   state: 'state', category: 'category',
@@ -442,7 +455,7 @@ const CSV_HEADER_MAP = {
   reason: 'reason', close_reason: 'reason', closure_reason: 'reason', resolution_reason: 'reason',
   time_worked: 'time_worked',
 };
-const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'short_desc',
+const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'quick_booking_id', 'short_desc',
   'assignment_group', 'state', 'category', 'sub_category', 'open_from',
   'country', 'email', 'mailbox', 'opened_at', 'assigned_to', 'email_comment', 'time_worked', 'reason'];
 // 17 columns × 50 rows stays well below SQLite's usual 999 bind-variable
@@ -757,7 +770,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     let totalChildren = 0;
     const BATCH_SIZE = 1500;
     while (true) {
-      const rows = queryAll(db, `SELECT rowid AS _rowid, number, consol_id, shipment_id,
+      const rows = queryAll(db, `SELECT rowid AS _rowid, number, consol_id, shipment_id, quick_booking_id,
         short_desc, assignment_group, state, category, sub_category, open_from,
         country, email, mailbox, opened_at, assigned_to, time_worked, reason
         FROM tasks WHERE rowid > ? ORDER BY rowid LIMIT ?`, [lastRowId, BATCH_SIZE]);
@@ -777,7 +790,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
             '', 0, '']);
           childInsert.step();
           childInsert.reset();
-          for (const sid of splitShipmentIds(r.shipment_id || '')) {
+          for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
             childShipInsert.bind([sid, num]);
             childShipInsert.step();
             childShipInsert.reset();
@@ -792,7 +805,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
           sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || '')]);
         parentInsert.step();
         parentInsert.reset();
-        for (const sid of splitShipmentIds(r.shipment_id || '')) {
+        for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
           shipInsert.bind([sid, num]);
           shipInsert.step();
           shipInsert.reset();
@@ -905,6 +918,7 @@ function buildDerived(db, dbId) {
           number: num,
           consol: normKey(r.consol_id || ''),
           shipment: (r.shipment_id || '').trim(),
+          quick_booking_id: (r.quick_booking_id || '').trim(),
           short_desc: r.short_desc || '',
           agroup: norm(r.assignment_group || '') || '(unassigned)',
           state: norm(r.state || ''),
@@ -913,7 +927,7 @@ function buildDerived(db, dbId) {
           opened_ts: openedTs,
           time_worked: parseTimeWorked(r.time_worked),
         });
-        for (const sid of splitShipmentIds(r.shipment_id || '')) {
+        for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
           if (!shipToChildren.has(sid)) shipToChildren.set(sid, new Set());
           shipToChildren.get(sid).add(num);
         }
@@ -944,7 +958,7 @@ function buildDerived(db, dbId) {
       }
 
       // Track shipment IDs
-      for (const sid of splitShipmentIds(r.shipment_id || '')) {
+      for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
         if (!shipToParents.has(sid)) shipToParents.set(sid, new Set());
         shipToParents.get(sid).add(num);
       }
@@ -2698,6 +2712,84 @@ function getQuickBookingShipmentAnalysis(filters = {}) {
   };
 }
 
+// A shipment may have multiple processing legs in the same region. This
+// aggregation keeps each shipment-region visit intact, so comparisons between
+// one-process and multi-process flows are not distorted by ticket volume.
+function getShipmentRegionFlowAnalysis() {
+  const items = shipmentItemsFromRows(getShipmentAnalysisRows());
+  const flows = [];
+  for (const item of items) {
+    const byRegion = new Map();
+    for (const ticket of item.tickets) {
+      let region = regionOf(ticket.agroup, ticket.country);
+      // Apply the shipment-wide CN refinement to every ticket leg, not only
+      // the latest ticket that labels the existing shipment table.
+      if (region === 'CN') region = shipmentRegionOf(item.tickets, ticket, ticket.region_context);
+      const process = ticket.category || '(Uncategorised)';
+      if (!byRegion.has(region)) byRegion.set(region, {
+        shipment_id: item.shipment_id, region, tickets: 0, total_secs: 0,
+        process_set: new Set(), process_metrics: new Map(), process_path: [], last_process: '',
+      });
+      const flow = byRegion.get(region);
+      flow.tickets += 1;
+      flow.total_secs += ticket.time_worked || 0;
+      flow.process_set.add(process);
+      const processMetric = flow.process_metrics.get(process) || { secs: 0, tickets: 0 };
+      processMetric.secs += ticket.time_worked || 0;
+      processMetric.tickets += 1;
+      flow.process_metrics.set(process, processMetric);
+      // Preserve the chronological path while collapsing only adjacent repeats.
+      if (flow.last_process !== process) flow.process_path.push(process);
+      flow.last_process = process;
+    }
+    for (const flow of byRegion.values()) {
+      const process_count = flow.process_set.size;
+      flows.push({
+        shipment_id: flow.shipment_id, region: flow.region, tickets: flow.tickets,
+        process_count, total_secs: flow.total_secs,
+        avg_per_process_secs: process_count ? flow.total_secs / process_count : 0,
+        process_metrics: Object.fromEntries(flow.process_metrics),
+        process_path: flow.process_path.join(' → '),
+      });
+    }
+  }
+
+  const regionBuckets = new Map();
+  for (const flow of flows) {
+    if (!regionBuckets.has(flow.region)) regionBuckets.set(flow.region, {
+      region: flow.region, flows: [], shipment_ids: new Set(),
+    });
+    const bucket = regionBuckets.get(flow.region);
+    bucket.flows.push(flow);
+    bucket.shipment_ids.add(flow.shipment_id);
+  }
+  const summarize = selected => {
+    const total_secs = selected.reduce((sum, flow) => sum + flow.total_secs, 0);
+    const processes = selected.reduce((sum, flow) => sum + flow.process_count, 0);
+    return {
+      flows: selected.length,
+      total_secs,
+      processes,
+      avg_per_process_secs: processes ? total_secs / processes : 0,
+      avg_tickets: selected.length
+        ? selected.reduce((sum, flow) => sum + flow.tickets, 0) / selected.length : 0,
+    };
+  };
+  const regions = [...regionBuckets.values()].map(bucket => {
+    const single = summarize(bucket.flows.filter(flow => flow.process_count === 1));
+    const multi = summarize(bucket.flows.filter(flow => flow.process_count >= 2));
+    const three_plus = summarize(bucket.flows.filter(flow => flow.process_count >= 3));
+    return {
+      region: bucket.region, shipments: bucket.shipment_ids.size,
+      all: summarize(bucket.flows), single, multi, three_plus,
+      multi_vs_single_secs: single.avg_per_process_secs && multi.avg_per_process_secs
+        ? multi.avg_per_process_secs - single.avg_per_process_secs : null,
+    };
+  }).sort((a, b) => b.all.avg_per_process_secs - a.all.avg_per_process_secs || a.region.localeCompare(b.region));
+
+  return { flows, regions, shipments: items.length };
+}
+
 // These rankings use shipment-level transition definitions. Sub-categories
 // stay paired to their category, avoiding misleading roll-ups where different
 // categories share the same sub-category.
@@ -3770,7 +3862,7 @@ async function processLargeCSVFile(file) {
                 if (source === 'Child Task') {
                   children.push(number, normKey(read(row, 'consol_id')), shortDesc, agroup, state, category,
                     openedAt, openedTs, timeWorked, '', 0, '');
-                  for (const sid of splitShipmentIds(read(row, 'shipment_id'))) childShips.push(sid, number);
+                  for (const sid of shipmentKeysForTask(read(row, 'shipment_id'), category, read(row, 'quick_booking_id'))) childShips.push(sid, number);
                   continue;
                 }
                 parents.push(number, normKey(read(row, 'consol_id')), agroup, state, category,
@@ -3778,7 +3870,7 @@ async function processLargeCSVFile(file) {
                   read(row, 'email').trim().toLowerCase(), norm(read(row, 'mailbox')), openedAt, openedTs,
                   timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')),
                   norm(read(row, 'reason')));
-                for (const sid of splitShipmentIds(read(row, 'shipment_id'))) ships.push(sid, number);
+                for (const sid of shipmentKeysForTask(read(row, 'shipment_id'), category, read(row, 'quick_booking_id'))) ships.push(sid, number);
               }
               if (parents.length) { const stmt = parentStmtFor(parents.length / 18); stmt.run(parents); stmt.free(); }
               if (children.length) { const stmt = childStmtFor(children.length / 12); stmt.run(children); stmt.free(); }
@@ -3941,18 +4033,11 @@ async function processDBFile(file) {
         updateProgress('Building', `Building derived tables for ${file.name}...`);
         buildDerived(srcDB, 0);
       } else if (schemaVersion !== String(SCHEMA_VERSION)) {
-        // Older schema: the clusters themselves stay valid (v8 duplicate
-        // semantics are unchanged) — normalize their list columns and re-roll
-        // the materialized rollups, which picks up n_cats, \x1f separators
-        // and the new consol_fanout table without a full re-analysis.
+        // v12 changes shipment membership, so ship_link must be rebuilt rather
+        // than merely refreshing the rollups.
         updateProgress('Upgrading',
-          `Rebuilding rollups for ${file.name} (schema ${schemaVersion || 'unknown'} → ${SCHEMA_VERSION})...`);
-        try { normalizeClusterLists(srcDB); } catch (e) { console.warn('cluster list normalization failed:', e); }
-        try { rebuildDupGroup(srcDB); } catch (e) { console.warn('dup_group rebuild failed:', e); }
-        try { rebuildConsolFanout(srcDB); } catch (e) { console.warn('consol_fanout rebuild failed:', e); }
-        try {
-          runSQL(srcDB, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['schema_version', String(SCHEMA_VERSION)]);
-        } catch (e) { /* meta may not exist */ }
+          `Rebuilding shipment links for ${file.name} (schema ${schemaVersion || 'unknown'} → ${SCHEMA_VERSION})...`);
+        buildDerived(srcDB, 0);
       } else {
         updateProgress('Loading', `Loaded ${file.name} — derived tables found`);
       }
@@ -4084,6 +4169,7 @@ if (typeof window !== 'undefined') {
     getAssigneeTimeDetail,
     getCategoryStats,
     getQuickBookingShipmentAnalysis,
+    getShipmentRegionFlowAnalysis,
     getShipmentAnalysisHotspots,
     getDescriptionMatchedShipmentAnalysis,
     getShipmentAnalysisOptions,
@@ -4753,6 +4839,7 @@ function onDataReady() {
   shipmentAnalysisOptions = null;
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
+  shipmentRegionFlowCache = null;
   modeState.mode = 'all';
   loadGroups();
   loadAssignees();
@@ -4782,6 +4869,7 @@ function resetAll() {
   shipmentAnalysisOptions = null;
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
+  shipmentRegionFlowCache = null;
   currentPage = 1; currentGroups = []; dashLoaded = false;
   assigneeCacheKey = null; assigneeCache = null;
   rawCols = null;
@@ -6639,6 +6727,205 @@ function renderQuickBookingSection() {
   }
 }
 
+const shipmentRegionState = {
+  region: '', process: '', complexity: 'all', sort: 'selected_process_secs', dir: 'desc',
+  page: 1, perPage: 100, timeUnit: 'hours', statistic: 'average', selectedTiming: 'majority',
+};
+let shipmentRegionFlowCache = null;
+let shipmentRegionFlowChart = null;
+let shipmentRegionAverageTimeChart = null;
+
+const shipmentRegionTime = secs => shipmentRegionState.timeUnit === 'minutes'
+  ? (secs / 60).toFixed(1) + 'm' : (secs / 3600).toFixed(2) + 'h';
+
+function shipmentRegionFilter(key, value) {
+  shipmentRegionState[key] = value;
+  shipmentRegionState.page = 1;
+  renderShipmentRegionSection();
+}
+
+function shipmentRegionSort(key) {
+  if (shipmentRegionState.sort === key) shipmentRegionState.dir = shipmentRegionState.dir === 'asc' ? 'desc' : 'asc';
+  else { shipmentRegionState.sort = key; shipmentRegionState.dir = key === 'shipment_id' || key === 'region' || key === 'process_path' ? 'asc' : 'desc'; }
+  renderShipmentRegionSection();
+}
+
+function shipmentRegionPage(page) {
+  shipmentRegionState.page = Math.max(1, Number(page) || 1);
+  renderShipmentRegionSection();
+}
+
+function renderShipmentRegionSection() {
+  const root = document.getElementById('shipmentRegionSection');
+  if (!root) return;
+  if (!shipmentRegionFlowCache) shipmentRegionFlowCache = window.App.getShipmentRegionFlowAnalysis();
+  const data = shipmentRegionFlowCache;
+  const state = shipmentRegionState;
+  const time = shipmentRegionTime;
+  const statisticLabel = state.statistic === 'median' ? 'Median' : 'Average';
+  const median = values => {
+    if (!values.length) return 0;
+    const ordered = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(ordered.length / 2);
+    return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
+  };
+  const processes = [...new Set(data.flows.flatMap(flow => Object.keys(flow.process_metrics)))].sort();
+  if (!processes.includes(state.process)) state.process = processes.includes('Quick Booking') ? 'Quick Booking' : (processes[0] || '');
+  const selectedProcess = state.process;
+  const inSelectedRegion = flow => !state.region || flow.region === state.region;
+  const matchesComplexity = flow => state.complexity === 'all'
+    || (state.complexity === 'single' ? flow.process_count === 1
+      : state.complexity === 'two' ? flow.process_count === 2 : flow.process_count >= 3);
+  const selectedFlows = data.flows.filter(flow => inSelectedRegion(flow) && flow.process_metrics[selectedProcess]);
+  const visibleFlows = selectedFlows.filter(matchesComplexity).map(flow => ({
+    ...flow, selected_process_secs: flow.process_metrics[selectedProcess].secs,
+    selected_process_tickets: flow.process_metrics[selectedProcess].tickets,
+  }));
+  const summarize = flows => {
+    const selected_process_secs = flows.reduce((sum, flow) => sum + flow.selected_process_secs, 0);
+    return {
+      flows: flows.length,
+      shipments: new Set(flows.map(flow => flow.shipment_id)).size,
+      selected_process_secs,
+      avg_selected_process_secs: flows.length ? selected_process_secs / flows.length : 0,
+      median_selected_process_secs: median(flows.map(flow => flow.selected_process_secs)),
+      avg_complexity: flows.length ? flows.reduce((sum, flow) => sum + flow.process_count, 0) / flows.length : 0,
+    };
+  };
+  const processStatistic = summary => state.statistic === 'median'
+    ? summary.median_selected_process_secs : summary.avg_selected_process_secs;
+  const regionMap = new Map();
+  for (const flow of selectedFlows.map(flow => ({ ...flow, selected_process_secs: flow.process_metrics[selectedProcess].secs, selected_process_tickets: flow.process_metrics[selectedProcess].tickets }))) {
+    if (!regionMap.has(flow.region)) regionMap.set(flow.region, []);
+    regionMap.get(flow.region).push(flow);
+  }
+  const regionRows = [...regionMap.entries()].map(([region, flows]) => {
+    const single = summarize(flows.filter(flow => flow.process_count === 1));
+    const multi = summarize(flows.filter(flow => flow.process_count >= 2));
+    return {
+      region, all: summarize(flows), single, multi,
+      multi_vs_single_secs: single.flows && multi.flows ? processStatistic(multi) - processStatistic(single) : null,
+    };
+  }).sort((a, b) => processStatistic(b.all) - processStatistic(a.all) || a.region.localeCompare(b.region));
+  const chartRows = regionRows.filter(row => row.single.flows && row.multi.flows).slice(0, 18);
+  // This deliberately uses every shipment-region flow, rather than the selected
+  // category or complexity filter. It is the overall workload-time view by region.
+  const allRegionMap = new Map();
+  for (const flow of data.flows) {
+    if (!allRegionMap.has(flow.region)) allRegionMap.set(flow.region, { region: flow.region, flows: 0, total_secs: 0, shipment_ids: new Set(), flow_times: [] });
+    const row = allRegionMap.get(flow.region);
+    row.flows++;
+    row.total_secs += flow.total_secs;
+    row.shipment_ids.add(flow.shipment_id);
+    row.flow_times.push(flow.total_secs);
+  }
+  const overallShipmentTimeRows = [...allRegionMap.values()].map(row => ({
+    ...row,
+    shipments: row.shipment_ids.size,
+    avg_shipment_secs: row.flows ? row.total_secs / row.flows : 0,
+    median_shipment_secs: median(row.flow_times),
+  })).map(row => ({
+    ...row,
+    shipment_stat_secs: state.statistic === 'median' ? row.median_shipment_secs : row.avg_shipment_secs,
+  })).sort((a, b) => b.shipment_stat_secs - a.shipment_stat_secs || a.region.localeCompare(b.region));
+
+  if (shipmentRegionFlowChart) { try { shipmentRegionFlowChart.destroy(); } catch (_) {} shipmentRegionFlowChart = null; }
+  if (shipmentRegionAverageTimeChart) { try { shipmentRegionAverageTimeChart.destroy(); } catch (_) {} shipmentRegionAverageTimeChart = null; }
+  const regionOptions = regionRows.map(row => '<option value="' + attr(row.region) + '"' +
+    (state.region === row.region ? ' selected' : '') + '>' + escHTML(row.region) + '</option>').join('');
+  const processOptions = processes.map(process => '<option value="' + attr(process) + '"' +
+    (selectedProcess === process ? ' selected' : '') + '>' + escHTML(process) + '</option>').join('');
+  const arrow = key => state.sort === key ? (state.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+  const comparisonRows = regionRows.map(row => {
+    const delta = row.multi_vs_single_secs;
+    const selectedTimingType = state.selectedTiming === 'single' ? 'single'
+      : state.selectedTiming === 'multi' ? 'multi'
+        : (row.multi.flows > row.single.flows ? 'multi' : 'single');
+    const selectedTimingSummary = selectedTimingType === 'multi' ? row.multi : row.single;
+    const stat = summary => summary.flows
+      ? '<b>' + time(processStatistic(summary)) + '</b><br><span class="gsm-pct">' + summary.flows.toLocaleString() + ' flows · avg ' + summary.avg_complexity.toFixed(1) + ' processes</span>'
+      : '—';
+    const selectedTimingHtml = selectedTimingSummary.flows
+      ? '<b>' + time(processStatistic(selectedTimingSummary)) + '</b><br><span class="gsm-pct">' +
+        (selectedTimingType === 'single' ? 'Only this process' : 'With other processes') + ' · ' + selectedTimingSummary.flows.toLocaleString() + ' flows</span>'
+      : '—';
+    const deltaHtml = delta == null ? '—' : '<span class="' + (delta < 0 ? 'b-verified' : 'b-unverified') + '">' +
+      (delta < 0 ? '−' : '+') + time(Math.abs(delta)) + '</span>';
+    return '<tr><td><b>' + escHTML(row.region) + '</b></td><td class="num">' + row.all.shipments.toLocaleString() + '</td>' +
+      '<td class="num">' + stat(row.all) + '</td><td class="num">' + stat(row.single) + '</td><td class="num">' + stat(row.multi) + '</td><td class="num">' + selectedTimingHtml + '</td><td class="num">' + deltaHtml + '</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="color:var(--text3)">No regional flows include this process.</td></tr>';
+
+  const sortedFlows = [...visibleFlows].sort((a, b) => {
+    const av = a[state.sort], bv = b[state.sort];
+    const delta = typeof av === 'number' && typeof bv === 'number'
+      ? av - bv : String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv), undefined, { numeric: true });
+    return delta * (state.dir === 'asc' ? 1 : -1) || a.shipment_id.localeCompare(b.shipment_id);
+  });
+  const totalPages = Math.max(1, Math.ceil(sortedFlows.length / state.perPage));
+  if (state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * state.perPage;
+  const flowRows = sortedFlows.slice(start, start + state.perPage).map(flow =>
+    '<tr><td><b>' + escHTML(flow.shipment_id) + '</b></td><td>' + escHTML(flow.region) + '</td>' +
+    '<td class="num">' + flow.process_count + '</td><td style="font-size:0.72rem">' + escHTML(flow.process_path) + '</td>' +
+    '<td class="num">' + flow.selected_process_tickets + '</td><td class="num"><b>' + time(flow.selected_process_secs) + '</b></td>' +
+    '<td class="num">' + time(flow.total_secs) + '</td></tr>').join('') ||
+    '<tr><td colspan="7" style="color:var(--text3)">No shipment-region flows match this selection.</td></tr>';
+
+  const summary = summarize(visibleFlows);
+  const multiFlows = visibleFlows.filter(flow => flow.process_count >= 2);
+  root.innerHTML = '<div class="chart-grid"><div class="chart-card full"><h3>Shipment and Region · Same-process comparison</h3>' +
+    '<div class="note">Select one category, then compare <b>that same category&apos;s logged time per shipment-region flow</b>. For example, selecting A compares A in a US A→B→C flow with A in a VN A-only flow. The process path and complexity show the surrounding workload, but never change which process is being timed.</div>' +
+    '<div class="qb-analysis-controls"><label class="qb-analysis-filter"><span>Process / category</span><select onchange="shipmentRegionFilter(\'process\', this.value)">' + processOptions + '</select></label><label class="qb-analysis-filter"><span>Country / Region</span><select onchange="shipmentRegionFilter(\'region\', this.value)"><option value="">All regions</option>' + regionOptions + '</select></label>' +
+    '<label class="qb-analysis-filter"><span>Flow complexity</span><select onchange="shipmentRegionFilter(\'complexity\', this.value)"><option value="all"' + (state.complexity === 'all' ? ' selected' : '') + '>All flows</option><option value="single"' + (state.complexity === 'single' ? ' selected' : '') + '>Only this process</option><option value="two"' + (state.complexity === 'two' ? ' selected' : '') + '>2 processes total</option><option value="three-plus"' + (state.complexity === 'three-plus' ? ' selected' : '') + '>3+ processes total</option></select></label><label class="qb-analysis-filter"><span>Selected timing</span><select onchange="shipmentRegionFilter(\'selectedTiming\', this.value)"><option value="majority"' + (state.selectedTiming === 'majority' ? ' selected' : '') + '>Most common route</option><option value="single"' + (state.selectedTiming === 'single' ? ' selected' : '') + '>Only this process</option><option value="multi"' + (state.selectedTiming === 'multi' ? ' selected' : '') + '>With other processes</option></select></label><label class="qb-analysis-filter"><span>Statistic</span><select onchange="shipmentRegionFilter(\'statistic\', this.value)"><option value="average"' + (state.statistic === 'average' ? ' selected' : '') + '>Average</option><option value="median"' + (state.statistic === 'median' ? ' selected' : '') + '>Median</option></select></label><label class="qb-analysis-filter"><span>Time unit</span><select onchange="shipmentRegionFilter(\'timeUnit\', this.value)"><option value="hours"' + (state.timeUnit === 'hours' ? ' selected' : '') + '>Hours</option><option value="minutes"' + (state.timeUnit === 'minutes' ? ' selected' : '') + '>Minutes</option></select></label></div>' +
+    '<div class="kpi-row"><div class="kpi info"><div class="kpi-label">Flows containing ' + escHTML(selectedProcess) + '</div><div class="kpi-value">' + visibleFlows.length.toLocaleString() + '</div><div class="kpi-sub">across ' + summary.shipments.toLocaleString() + ' shipments</div></div><div class="kpi purple"><div class="kpi-label">' + statisticLabel + ' ' + escHTML(selectedProcess) + ' time / flow</div><div class="kpi-value">' + (summary.flows ? time(processStatistic(summary)) : '—') + '</div><div class="kpi-sub">same process in every row</div></div><div class="kpi"><div class="kpi-label">With other processes</div><div class="kpi-value">' + multiFlows.length.toLocaleString() + '</div><div class="kpi-sub">' + (visibleFlows.length ? (100 * multiFlows.length / visibleFlows.length).toFixed(1) : 0) + '% of selected flows</div></div></div><div class="chart-wrap tall"><canvas id="shipmentRegionFlowChart"></canvas></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>' + statisticLabel + ' shipment time by Country / Region</h3><div class="note">Overall ' + statisticLabel.toLowerCase() + ' total logged time for each shipment-region flow, across <b>all</b> processes. This is independent of the selected category above. A shipment that visits multiple regions is counted once in every region it visits.</div><div class="chart-wrap tall"><canvas id="shipmentRegionAverageTimeChart"></canvas></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>' + escHTML(selectedProcess) + ' by Country / Region</h3><div class="note">“Only this process” means the shipment-region flow contains no other category. “With other processes” includes A→B, A→B→C, etc. The <b>Selected timing</b> column uses the route with the most flows in each region by default; use the selector to force either route type.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country / Region</th><th class="num">Shipments</th><th class="num">' + statisticLabel + ' selected-process time</th><th class="num">Only this process</th><th class="num">With other processes</th><th class="num">Selected timing</th><th class="num">Other − only</th></tr></thead><tbody>' + comparisonRows + '</tbody></table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>' + escHTML(selectedProcess) + ' shipment-region flows</h3><div class="note">Click a column to sort. Process Path shows the surrounding categories; the selected-process time remains the time for <b>' + escHTML(selectedProcess) + '</b> only.</div><div class="filter-meta"><span>' + (sortedFlows.length ? (start + 1).toLocaleString() + '–' + Math.min(start + state.perPage, sortedFlows.length).toLocaleString() : '0') + ' of ' + sortedFlows.length.toLocaleString() + ' flows</span><button onclick="shipmentRegionPage(' + (state.page - 1) + ')"' + (state.page <= 1 ? ' disabled' : '') + '>← Prev</button><span>Page ' + state.page + ' of ' + totalPages + '</span><button onclick="shipmentRegionPage(' + (state.page + 1) + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>Next →</button></div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="shipmentRegionSort(\'shipment_id\')" style="cursor:pointer">Shipment ID' + arrow('shipment_id') + '</th><th onclick="shipmentRegionSort(\'region\')" style="cursor:pointer">Country / Region' + arrow('region') + '</th><th class="num" onclick="shipmentRegionSort(\'process_count\')" style="cursor:pointer">Distinct processes' + arrow('process_count') + '</th><th onclick="shipmentRegionSort(\'process_path\')" style="cursor:pointer">Process path</th><th class="num" onclick="shipmentRegionSort(\'selected_process_tickets\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' tickets' + arrow('selected_process_tickets') + '</th><th class="num" onclick="shipmentRegionSort(\'selected_process_secs\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' time' + arrow('selected_process_secs') + '</th><th class="num" onclick="shipmentRegionSort(\'total_secs\')" style="cursor:pointer">Total flow time' + arrow('total_secs') + '</th></tr></thead><tbody>' + flowRows + '</tbody></table></div></div></div>';
+
+  const canvas = document.getElementById('shipmentRegionFlowChart');
+  if (canvas && chartRows.length) shipmentRegionFlowChart = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: chartRows.map(row => row.region), datasets: [
+      { label: 'Only ' + selectedProcess, data: chartRows.map(row => state.timeUnit === 'minutes' ? processStatistic(row.single) / 60 : processStatistic(row.single) / 3600), backgroundColor: 'rgba(59,113,202,.75)', borderRadius: 4 },
+      { label: selectedProcess + ' with other processes', data: chartRows.map(row => state.timeUnit === 'minutes' ? processStatistic(row.multi) / 60 : processStatistic(row.multi) / 3600), backgroundColor: 'rgba(13,148,136,.78)', borderRadius: 4 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } }, tooltip: { callbacks: { afterLabel: context => {
+      const summary = context.datasetIndex ? chartRows[context.dataIndex].multi : chartRows[context.dataIndex].single;
+      return summary.flows + ' flows · average ' + summary.avg_complexity.toFixed(1) + ' distinct processes';
+    } } } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, title: { display: true, text: statisticLabel + ' ' + selectedProcess + ' time per shipment-region flow (' + (state.timeUnit === 'minutes' ? 'minutes' : 'hours') + ')' } } } },
+  });
+
+  const averageTimeCanvas = document.getElementById('shipmentRegionAverageTimeChart');
+  if (averageTimeCanvas && overallShipmentTimeRows.length) shipmentRegionAverageTimeChart = new Chart(averageTimeCanvas, {
+    type: 'bar',
+    data: {
+      labels: overallShipmentTimeRows.map(row => row.region),
+      datasets: [{
+        label: statisticLabel + ' total shipment time',
+        data: overallShipmentTimeRows.map(row => state.timeUnit === 'minutes' ? row.shipment_stat_secs / 60 : row.shipment_stat_secs / 3600),
+        backgroundColor: 'rgba(124,58,237,.78)', borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: context => context.parsed.x.toFixed(state.timeUnit === 'minutes' ? 1 : 2) + ' ' + (state.timeUnit === 'minutes' ? 'minutes' : 'hours'),
+          afterLabel: context => {
+            const row = overallShipmentTimeRows[context.dataIndex];
+            return row.shipments.toLocaleString() + ' shipments · ' + row.flows.toLocaleString() + ' shipment-region flows';
+          },
+        } },
+      },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: statisticLabel + ' total time per shipment-region flow (' + (state.timeUnit === 'minutes' ? 'minutes' : 'hours') + ')' } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+}
+
 function dashTab(page) {
   document.querySelectorAll('#dashContent .dash-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.page === page));
@@ -6654,6 +6941,11 @@ function dashTab(page) {
   if (page === 'quick-booking' && shipmentRoot && shipmentRoot.dataset.lazyShipment === 'true') {
     shipmentRoot.dataset.lazyShipment = 'loaded';
     renderQuickBookingSection();
+  }
+  const shipmentRegionRoot = document.getElementById('shipmentRegionSection');
+  if (page === 'shipment-region' && shipmentRegionRoot && shipmentRegionRoot.dataset.lazyShipmentRegion === 'true') {
+    shipmentRegionRoot.dataset.lazyShipmentRegion = 'loaded';
+    renderShipmentRegionSection();
   }
   // render the quadrant lazily the first time the categories page is opened
   if (page === 'categories' && !quadRendered) {
@@ -8447,6 +8739,7 @@ function renderLargeFileDashboard(data) {
   root.innerHTML = '<div class="dash-tabs">' +
     '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
     '<button class="dash-tab" data-page="quick-booking" onclick="dashTab(\'quick-booking\')">Shipment Analysis</button>' +
+    '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
     '</div>' +
     '<div class="dash-page active" data-page="overview">' +
       '<div class="chart-grid"><div class="chart-card full"><h3>Large-file overview</h3>' +
@@ -8459,7 +8752,9 @@ function renderLargeFileDashboard(data) {
       '</div></div>' +
     '</div>' +
     '<div class="dash-page" data-page="quick-booking"><div id="quickBookingSection" data-lazy-shipment="true">' +
-      '<div class="loading">Open this tab to load Shipment Analysis.</div></div></div>';
+      '<div class="loading">Open this tab to load Shipment Analysis.</div></div></div>' +
+    '<div class="dash-page" data-page="shipment-region"><div id="shipmentRegionSection" data-lazy-shipment-region="true">' +
+      '<div class="loading">Open this tab to load Shipment and Region.</div></div></div>';
 }
 
 function renderDashboard(data) {
@@ -8780,12 +9075,15 @@ function renderDashboard(data) {
       '<button class="dash-tab" data-page="categories" onclick="dashTab(\'categories\')">Categories &amp; Baseline</button>' +
       '<button class="dash-tab" data-page="mile" onclick="dashTab(\'mile\')">Milestone Analysis</button>' +
       '<button class="dash-tab" data-page="quick-booking" onclick="dashTab(\'quick-booking\')">Shipment Analysis</button>' +
+      '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
     '</div>' +
     '<div class="dash-page active" data-page="overview">' + OV + '</div>' +
     '<div class="dash-page" data-page="teams">' + TM + '</div>' +
     '<div class="dash-page" data-page="categories">' + CT + '</div>' +
     '<div class="dash-page" data-page="mile">' + ML + '</div>' +
-    '<div class="dash-page" data-page="quick-booking">' + QB + '</div>';
+    '<div class="dash-page" data-page="quick-booking">' + QB + '</div>' +
+    '<div class="dash-page" data-page="shipment-region"><div id="shipmentRegionSection" data-lazy-shipment-region="true">' +
+      '<div class="loading">Open this tab to load Shipment and Region.</div></div></div>';
   // Destroy charts from any previous render BEFORE creating new ones —
   // otherwise the E1 charts created below would be wiped by this cleanup
   charts.forEach(c => c.destroy()); charts.length = 0;
