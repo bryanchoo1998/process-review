@@ -532,3 +532,4 @@ GBS - FN - GL - MY - AP INV,AP Invoice,GL,FN,MY,ASIA,Yuen Shih Chong,Zurina,GL A
 GBS - FN - GL - VN - AP INV,AP Invoice,GL,FN,VN,ASIA,Yuen Shih Chong,Zurina,GL Asia,ASIA,
 GBS - GF - VSL UPDATE - EMEA SEA,SEA EXPORT,GF,OPS,EMEA,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,EMEA
 GBS - GF - WTR & XRAY- DE - EXPORT AIR,AIR EXPORT,GF,OPS,DE,EMEA,Heme Sarawanan Durairaj,Meheswaren ,GF,EMEA,DE
+GBS - GF - SHIP INST - SZ - EXPORT SEA - P2,,,,,,,,,,SZ
