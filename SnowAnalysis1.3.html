@@ -4661,6 +4661,8 @@ if (typeof window !== 'undefined') {
   .qb-efficiency-ranking .efficiency-best td { background: #f1f7ff; }
   .qb-efficiency-ranking .qb-efficiency-row { cursor: pointer; }
   .qb-efficiency-ranking .qb-efficiency-row:hover td, .qb-efficiency-ranking .qb-efficiency-row:focus td { background: #e8f0fe; }
+  .qb-efficiency-ranking .qb-efficiency-table-wrap { max-height: min(70vh, 720px); overflow: auto; overscroll-behavior: contain; }
+  .qb-efficiency-ranking .qb-efficiency-table-wrap thead th { position: sticky; top: 0; z-index: 3; background: var(--surface2); box-shadow: 0 1px 0 var(--border), 0 4px 8px rgba(15,23,42,.05); }
   .qb-efficiency-ranking .qb-efficiency-hover-card { margin-top: 10px; padding: 9px 11px; border: 1px solid #d9e4f5; border-left: 3px solid var(--blue); border-radius: 7px; background: #f8fbff; min-height: 42px; }
   .qb-efficiency-ranking .qb-efficiency-hover-title { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font-size: .72rem; }
   .qb-efficiency-ranking .qb-efficiency-hover-title span { color: var(--text3); font-size: .65rem; }
@@ -6922,7 +6924,7 @@ function renderQuickBookingSection() {
     '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. ' +
       (isMilestoneE6E8Scope ? 'The additional assignment-group split uses each shipment&apos;s displayed assignment group and shows the ' + milestoneTicketStatisticLabel.toLowerCase() + ' shipment processing time and ticket count per shipment for Export Air, Import Air, Import Sea, and Export Sea, together with shipment volume. Last-ticket timing is split into those same flows and uses only multi-ticket shipments. It uses the latest opened ticket; tied longest work times count as longest. Its percentage difference compares the selected ' + milestoneTicketStatisticLabel.toLowerCase() + ' qualifying last-ticket time with the same statistic for earlier tickets in those shipments. ' : '') +
       'Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the shipment-linked heatmap. Volume is shown to help assess the result.</div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th>' +
+    '<div class="tbl-wrap qb-efficiency-table-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th>' +
       (isMilestoneE6E8Scope ? '<th>Processing time by flow<br><span class="gsm-pct">' + milestoneTicketStatisticLabel + ' time &amp; tickets per shipment · shipment count</span></th>' : '') +
       (isMilestoneE6E8Scope ? MILESTONE_ASSIGNMENT_FLOWS.map(flow => '<th>' + flow.label + '<br><span class="gsm-pct">Last-ticket timing · multi-ticket only</span></th>').join('') : '') +
       '<th class="num">Total time</th></tr></thead><tbody>' +
