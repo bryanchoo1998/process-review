@@ -745,6 +745,7 @@ async function importCSV(file, dbEntry, options = {}) {
 // by shipment analysis, raw data, and the standard summaries, but deliberately
 // omits duplicate clustering and fan-out detection (both retain huge JS maps).
 function buildLargeDatasetDerived(db, dbId, totalTasks) {
+  clearShipmentAnalysisRowsCache();
   const t0 = performance.now();
   updateProgress('Large-file mode', 'Building shipment and raw-data tables...');
   runSQL(db, 'BEGIN IMMEDIATE');
@@ -862,6 +863,9 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
 }
 
 function buildDerived(db, dbId) {
+  // A rebuild may reuse the same in-memory database after another CSV is
+  // imported, so cached shipment rows can no longer be trusted.
+  clearShipmentAnalysisRowsCache();
   const t0 = performance.now();
   const totalTasksForBuild = queryValue(db, 'SELECT COUNT(*) FROM tasks') || 0;
   if (totalTasksForBuild > LARGE_DATASET_ROW_LIMIT) {
@@ -2574,8 +2578,28 @@ function getCategoryStats(groups = []) {
 // its logged time to each shipment. The count is deliberately calculated
 // before scope filters are applied, so narrowing to one team/category does not
 // reassign the entire job's effort to that single scope.
+let shipmentAnalysisRowsCache = new Map();
+let shipmentAnalysisRowsCacheDB = null;
+
+function clearShipmentAnalysisRowsCache() {
+  shipmentAnalysisRowsCache = new Map();
+  shipmentAnalysisRowsCacheDB = null;
+}
+
 function getShipmentAnalysisRows(filters = {}) {
   const db = getPrimaryDB();
+  // The selector, hotspots, and shipment views all draw from this same result.
+  // Cache by scope to avoid repeatedly copying a large SQL/WASM result set.
+  if (shipmentAnalysisRowsCacheDB !== db) {
+    shipmentAnalysisRowsCache.clear();
+    shipmentAnalysisRowsCacheDB = db;
+  }
+  const cacheKey = JSON.stringify({
+    category: filters.category || '',
+    sub_category: filters.sub_category || '',
+    agroup: filters.agroup || '',
+  });
+  if (shipmentAnalysisRowsCache.has(cacheKey)) return shipmentAnalysisRowsCache.get(cacheKey);
   const clauses = [];
   const args = [];
   if (filters.category) { clauses.push('category = ?'); args.push(filters.category); }
@@ -2622,7 +2646,7 @@ function getShipmentAnalysisRows(filters = {}) {
               OR LOWER(COALESCE(c.category, '')) LIKE '%milestone%e8%')
          AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)`
     : '';
-  return queryAll(db,
+  const rows = queryAll(db,
     `WITH source_rows AS (
        SELECT sl.sid AS shipment_id, 'parent:' || p.number AS ticket_key,
               p.number, p.state, p.reason, p.opened_at, p.opened_ts, p.country,
@@ -2658,6 +2682,8 @@ function getShipmentAnalysisRows(filters = {}) {
      JOIN shipment_counts sc ON sc.ticket_key = fr.ticket_key
      LEFT JOIN region_context rc ON rc.shipment_id = fr.shipment_id
      ORDER BY fr.shipment_id, fr.opened_ts, fr.number`, args);
+  shipmentAnalysisRowsCache.set(cacheKey, rows);
+  return rows;
 }
 
 function shipmentItemsFromRows(rows) {
@@ -3013,31 +3039,26 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
   };
 }
 
-// Selector data is constrained to tickets that have at least one shipment ID,
-// matching the population used by the shipment analysis.
+// Selector data mirrors the shipment-analysis population, including the
+// Consol-ID fallback for Milestone E6/E8 records with Shipment ID = NA.
+// Deriving it from the shared rows prevents a second full SQL query merely to
+// populate the category, sub-category, and assignment-group selectors.
 function getShipmentAnalysisOptions() {
-  const db = getPrimaryDB();
-  const milestoneNaOptionsSql = hasTable(db, 'tasks')
-    ? `UNION
-       SELECT DISTINCT p.category, p.sub_category, p.agroup, p.state
-       FROM parent p
-       WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
-         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
-           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
-         AND (LOWER(COALESCE(p.category, '')) LIKE '%milestone%e6%'
-              OR LOWER(COALESCE(p.category, '')) LIKE '%milestone%e8%')
-         AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)`
-    : '';
-  return queryAll(db,
-    `SELECT DISTINCT p.category, p.sub_category, p.agroup, p.state
-     FROM parent p JOIN ship_link sl ON sl.number = p.number
-     WHERE sl.sid IS NOT NULL AND sl.sid != ''
-     ${milestoneNaOptionsSql}
-     ORDER BY category, sub_category, agroup`).map(r => ({
-      category: r.category || '',
-      sub_category: r.sub_category || '',
-      agroup: r.agroup || '',
-    }));
+  const options = new Map();
+  for (const row of getShipmentAnalysisRows()) {
+    const option = {
+      category: row.category || '',
+      sub_category: row.sub_category || '',
+      agroup: row.agroup || '',
+      state: row.state || '',
+    };
+    options.set(JSON.stringify(option), option);
+  }
+  return [...options.values()].sort((a, b) =>
+    a.category.localeCompare(b.category) ||
+    a.sub_category.localeCompare(b.sub_category) ||
+    a.agroup.localeCompare(b.agroup) ||
+    a.state.localeCompare(b.state));
 }
 
 // Lightweight assignee list for the sidebar filter combobox
@@ -6838,7 +6859,7 @@ function renderQuickBookingSection() {
       for (const regionKey of [item.region, '__overall__']) {
         const total = milestoneLastTicketMetricsByRegion.get(regionKey) || {
           shipments: 0, multi_ticket_shipments: 0, last_ticket_longest: 0,
-          last_longest_secs: 0, earlier_ticket_mean_secs: 0,
+          last_longest_values: [], earlier_ticket_values: [],
         };
         total.shipments++;
         if (item.tickets.length > 1) {
@@ -6849,10 +6870,13 @@ function renderQuickBookingSection() {
           const longest = Math.max(...item.tickets.map(ticket => Number(ticket.time_worked) || 0));
           if ((Number(latest.time_worked) || 0) >= longest - 1e-9) {
             total.last_ticket_longest++;
-            total.last_longest_secs += Number(latest.time_worked) || 0;
+            total.last_longest_values.push(Number(latest.time_worked) || 0);
             const earlierTickets = item.tickets.slice(0, -1);
-            total.earlier_ticket_mean_secs += earlierTickets.reduce((sum, ticket) =>
-              sum + (Number(ticket.time_worked) || 0), 0) / earlierTickets.length;
+            // Keep one comparable earlier-time value per qualifying shipment.
+            // Average retains the original calculation; Median/Max now follow
+            // the dashboard's statistic control instead of staying on average.
+            total.earlier_ticket_values.push(earlierTickets.reduce((sum, ticket) =>
+              sum + (Number(ticket.time_worked) || 0), 0) / earlierTickets.length);
           }
         }
         milestoneLastTicketMetricsByRegion.set(regionKey, total);
@@ -6865,16 +6889,14 @@ function renderQuickBookingSection() {
     const lastShare = metric.multi_ticket_shipments
       ? (100 * metric.last_ticket_longest / metric.multi_ticket_shipments).toFixed(1) + '%' : '—';
     const multiShare = (100 * metric.multi_ticket_shipments / metric.shipments).toFixed(1) + '%';
-    const avgLastLongestSecs = metric.last_ticket_longest
-      ? metric.last_longest_secs / metric.last_ticket_longest : 0;
-    const avgEarlierSecs = metric.last_ticket_longest
-      ? metric.earlier_ticket_mean_secs / metric.last_ticket_longest : 0;
-    const lastUpliftPct = avgEarlierSecs > 0
-      ? 100 * (avgLastLongestSecs - avgEarlierSecs) / avgEarlierSecs : null;
+    const selectedLastLongestSecs = milestoneTicketStatistic(metric.last_longest_values);
+    const selectedEarlierSecs = milestoneTicketStatistic(metric.earlier_ticket_values);
+    const lastUpliftPct = selectedEarlierSecs > 0
+      ? 100 * (selectedLastLongestSecs - selectedEarlierSecs) / selectedEarlierSecs : null;
     return '<div style="display:grid;gap:2px;min-width:200px;text-align:left;font-size:0.68rem;line-height:1.35">' +
       '<div><b>Last = longest:</b> ' + lastShare + ' <span class="gsm-pct">(' +
         metric.last_ticket_longest.toLocaleString() + ' / ' + metric.multi_ticket_shipments.toLocaleString() + ' multi-ticket)</span></div>' +
-      '<div><b>Avg last-ticket time:</b> ' + time(avgLastLongestSecs) + ' <span class="gsm-pct">(' +
+      '<div><b>' + milestoneTicketStatisticLabel + ' last-ticket time:</b> ' + time(selectedLastLongestSecs) + ' <span class="gsm-pct">(' +
         (lastUpliftPct == null ? 'earlier-ticket comparison unavailable' :
           (lastUpliftPct >= 0 ? '+' : '') + lastUpliftPct.toFixed(1) + '% vs earlier tickets') + ')</span></div>' +
       '<div><b>Multi-ticket shipments:</b> ' + multiShare + ' <span class="gsm-pct">(' +
@@ -6883,7 +6905,7 @@ function renderQuickBookingSection() {
   const overallEfficiencySection = '<div class="chart-grid qb-efficiency-ranking"><div class="chart-card full">' +
     '<h3>Overall processing-time efficiency · Country / Region</h3>' +
     '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. ' +
-      (isMilestoneE6E8Scope ? 'The additional assignment-group split uses each shipment&apos;s displayed assignment group and shows the ' + milestoneTicketStatisticLabel.toLowerCase() + ' number of tickets per Shipment ID plus the shipment count. The last-ticket metric uses the latest opened ticket; tied longest work times count as longest. Its percentage difference compares the average qualifying last-ticket time with the average earlier-ticket time in those same shipments. ' : '') +
+      (isMilestoneE6E8Scope ? 'The additional assignment-group split uses each shipment&apos;s displayed assignment group and shows the ' + milestoneTicketStatisticLabel.toLowerCase() + ' number of tickets per Shipment ID plus the shipment count. The last-ticket metric uses the latest opened ticket; tied longest work times count as longest. Its percentage difference compares the selected ' + milestoneTicketStatisticLabel.toLowerCase() + ' qualifying last-ticket time with the same statistic for earlier tickets in those shipments. ' : '') +
       'Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the shipment-linked heatmap. Volume is shown to help assess the result.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th>' +
       (isMilestoneE6E8Scope ? '<th>Tickets per Shipment ID<br><span class="gsm-pct">' + milestoneTicketStatisticLabel + ' · shipment count</span></th>' : '') +
@@ -9619,7 +9641,10 @@ function renderDashboard(data) {
   OV += '<div class="chart-grid">' + card('c7','Top Email Senders in Dups','Top 15 senders of duplicated tickets') +
        card('c8','Top Mailboxes','Top 10 mailboxes receiving duplicated tickets') + '</div>';
 
-  const QB = '<div id="quickBookingSection"></div>';
+  // Shipment analysis can be expensive for broad exports. Keep it out of the
+  // initial dashboard render and load it only when its tab is opened.
+  const QB = '<div id="quickBookingSection" data-lazy-shipment="true">' +
+    '<div class="loading">Open this tab to load Shipment Analysis.</div></div>';
 
   dashGroupData = data.by_group;
   document.getElementById('dashContent').innerHTML =
@@ -9653,7 +9678,6 @@ function renderDashboard(data) {
   renderE1Regions();
   renderModeAnalysis();
   renderFanout();
-  renderQuickBookingSection();
   ['subjTable', 'burstTable', 'childTable']
     .forEach(id => setRows(id, DEFAULT_ROWS));
   const mk = (id, cfg) => charts.push(new Chart(document.getElementById(id), cfg));
