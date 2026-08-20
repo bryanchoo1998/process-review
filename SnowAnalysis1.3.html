@@ -50,13 +50,13 @@ window.GBS_BASELINE = {"cat": {"Registration": [5, 15], "Validation": [5, 15], "
 // 8: same consol + different assignment group is no longer a duplicate.
 // 11: country and reason retained on parent rows so Shipment Analysis can
 //     analyse geography and the source-provided reason without loading email.
-// 12: blank Quick Booking shipment IDs fall back to the Quick Booking ID.
+// 14: compact/large-file imports retain Quick Booking no-shipment identifiers.
 // 9: consol-level fan-out table (cross-team analytics revived without
 //    touching v8 duplicate semantics); \x1f list separators; n_cats
 //    populated; basis majority vote; robust opened_at / time_worked
 //    parsing; hardened CSV import (canonical headers, dedup); dup_group
 //    re-rolled on load/merge; exclusions synced DB <-> localStorage.
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 14;
 
 // Duplicate detection thresholds
 const SD_THRESHOLD = 0.8;
@@ -185,15 +185,17 @@ function splitShipmentIds(raw) {
   return ids;
 }
 
-// Quick Booking exports sometimes leave Shipment ID blank while supplying a
-// Quick Booking ID. Keep that identifier intact (even when it does not match
-// the normal shipment-number pattern) so the related tickets remain analyzable.
-function shipmentKeysForTask(shipmentId, category, quickBookingId) {
-  const shipmentIds = splitShipmentIds(shipmentId);
-  if (shipmentIds.length || norm(category).toLowerCase() !== 'quick booking') return shipmentIds;
-  return [...new Set(String(quickBookingId || '').split(SHIP_SPLIT_RE)
+// Quick Booking IDs group tickets that do not have a valid Shipment ID, but
+// must not be treated as Shipment IDs or merged into shipment-based metrics.
+const QUICK_BOOKING_ID_EXCLUSIONS = new Set(['A', 'N']);
+function quickBookingIdKeys(raw) {
+  return [...new Set(String(raw || '').split(SHIP_SPLIT_RE)
     .map(value => normKey(value).replace(/^['"]+|['"]+$/g, ''))
-    .filter(value => value && !SHIP_STOPWORDS.has(value.toLowerCase())))];
+    .filter(value => value && !SHIP_STOPWORDS.has(value.toLowerCase()) && !QUICK_BOOKING_ID_EXCLUSIONS.has(value)))];
+}
+
+function shipmentKeysForTask(shipmentId) {
+  return splitShipmentIds(shipmentId);
 }
 
 function extractKeywords(text) {
@@ -394,6 +396,7 @@ const PARENT_DDL = `CREATE TABLE parent (
   category TEXT, sub_category TEXT, source TEXT, country TEXT, email TEXT, mailbox TEXT,
   opened_at TEXT, opened_ts INTEGER, time_worked INTEGER,
   short_desc TEXT, sd_norm TEXT, has_content INTEGER DEFAULT 0, assigned_to TEXT, reason TEXT,
+  quick_booking_id TEXT, has_shipment_id INTEGER DEFAULT 0,
   is_dup INTEGER DEFAULT 0, dup_by TEXT DEFAULT '',
   cluster_id INTEGER, dup_basis TEXT DEFAULT '',
   burst_id INTEGER, burst_kind TEXT DEFAULT ''
@@ -760,8 +763,8 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     const parentInsert = db.prepare(`INSERT INTO parent
       (number, consol_key, agroup, state, category, sub_category, source,
        country, email, mailbox, opened_at, opened_ts, time_worked,
-       short_desc, sd_norm, has_content, assigned_to, reason)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
     const shipInsert = db.prepare('INSERT INTO ship_link VALUES (?,?)');
     const childShipInsert = db.prepare('INSERT INTO child_ship_link VALUES (?,?)');
@@ -798,14 +801,16 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
           continue;
         }
         const sd = norm(r.short_desc || '');
+        const shipmentKeys = shipmentKeysForTask(r.shipment_id);
         parentInsert.bind([num, consolKey, norm(r.assignment_group || '') || '(unassigned)',
           norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''),
           source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(),
           norm(r.mailbox || ''), (r.opened_at || '').trim(), openedTs, tw,
-          sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || '')]);
+          sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || ''),
+          norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0]);
         parentInsert.step();
         parentInsert.reset();
-        for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
+        for (const sid of shipmentKeys) {
           shipInsert.bind([sid, num]);
           shipInsert.step();
           shipInsert.reset();
@@ -897,8 +902,8 @@ function buildDerived(db, dbId) {
   const parentInsert = db.prepare(`INSERT INTO parent
     (number, consol_key, agroup, state, category, sub_category, source,
      country, email, mailbox, opened_at, opened_ts, time_worked,
-     short_desc, sd_norm, has_content, assigned_to, reason)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   // Process in batches to avoid memory issues
   const BATCH_SIZE = 2000;
@@ -940,6 +945,7 @@ function buildDerived(db, dbId) {
       const sd = norm(r.short_desc || '');
       const sdNorm = normSd(sd);
       const hasContent = !!(sd || body.trim()) ? 1 : 0;
+      const shipmentKeys = shipmentKeysForTask(r.shipment_id);
 
       parentInsert.bind([
         num, consolKey, norm(r.assignment_group || '') || '(unassigned)',
@@ -947,6 +953,7 @@ function buildDerived(db, dbId) {
         source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(), norm(r.mailbox || ''),
         (r.opened_at || '').trim(), openedTs, tw,
         sd, sdNorm, hasContent, norm(r.assigned_to || ''), norm(r.reason || ''),
+        norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0,
       ]);
       parentInsert.step();
       parentInsert.reset();
@@ -958,7 +965,7 @@ function buildDerived(db, dbId) {
       }
 
       // Track shipment IDs
-      for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
+      for (const sid of shipmentKeys) {
         if (!shipToParents.has(sid)) shipToParents.set(sid, new Set());
         shipToParents.get(sid).add(num);
       }
@@ -2712,6 +2719,63 @@ function getQuickBookingShipmentAnalysis(filters = {}) {
   };
 }
 
+// Kept outside shipment analysis: a Quick Booking ID can identify a group of
+// tickets, but it is not a Shipment ID. This preserves a separate view of
+// logged effort without inflating Single Closed Complete or shipment regions.
+function getQuickBookingNoShipmentAnalysis(filters = {}) {
+  const db = getPrimaryDB();
+  // This metric is available only when the selected category is Quick Booking.
+  if (norm(filters.category).toLowerCase() !== 'quick booking') {
+    return { all: emptySummary(), items: [], ticket_count: 0 };
+  }
+  const parentFields = hasTable(db, 'parent') ? new Set(tableColumns(db, 'parent')) : new Set();
+  const taskFields = hasTable(db, 'tasks') ? new Set(tableColumns(db, 'tasks')) : new Set();
+  const useCompactParent = parentFields.has('quick_booking_id') && parentFields.has('has_shipment_id');
+  if (!useCompactParent && (!taskFields.has('quick_booking_id') || !taskFields.has('shipment_id'))) {
+    return { all: emptySummary(), items: [], ticket_count: 0 };
+  }
+  const clauses = ["LOWER(TRIM(COALESCE(category,''))) = 'quick booking'", "TRIM(COALESCE(quick_booking_id,'')) != ''"];
+  const args = [];
+  if (filters.sub_category) { clauses.push('sub_category = ?'); args.push(filters.sub_category); }
+  if (filters.agroup) { clauses.push((useCompactParent ? 'agroup' : 'assignment_group') + ' = ?'); args.push(filters.agroup); }
+  const sourceRows = useCompactParent
+    ? queryAll(db, `SELECT number, NULL AS shipment_id, quick_booking_id, has_shipment_id, state, reason, opened_at,
+        country, category, sub_category, time_worked, agroup AS assignment_group, assigned_to
+      FROM parent WHERE ${clauses.join(' AND ')}`, args)
+    : queryAll(db, `SELECT number, shipment_id, quick_booking_id, 0 AS has_shipment_id, state, reason, opened_at,
+        country, category, sub_category, time_worked, assignment_group, assigned_to
+      FROM tasks WHERE ${clauses.join(' AND ')}`, args);
+  const groupedRows = [];
+  for (const row of sourceRows) {
+    if (useCompactParent ? Number(row.has_shipment_id) : splitShipmentIds(row.shipment_id).length) continue;
+    const keys = quickBookingIdKeys(row.quick_booking_id);
+    if (!keys.length) continue;
+    const allocated_secs = parseTimeWorked(row.time_worked) / keys.length;
+    for (const key of keys) groupedRows.push({
+      shipment_id: key, number: row.number || '', state: norm(row.state || ''), reason: norm(row.reason || ''),
+      opened_at: row.opened_at || '', opened_ts: parseCsvDate(row.opened_at), country: norm(row.country || ''),
+      category: norm(row.category || ''), sub_category: norm(row.sub_category || ''), allocated_secs,
+      agroup: norm(row.assignment_group || '') || '(unassigned)', assigned_to: norm(row.assigned_to || ''), region_context: '',
+    });
+  }
+  const allItems = shipmentItemsFromRows(groupedRows);
+  const items = filters.latest_state
+    ? allItems.filter(item => item.latest_state === filters.latest_state) : allItems;
+  const values = items.map(item => item.total_secs);
+  const all = {
+    shipments: items.length,
+    total_secs: values.reduce((sum, value) => sum + value, 0),
+    avg_secs: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0,
+    median_secs: medianSecs(values), max_secs: values.length ? Math.max(...values) : 0,
+    avg_tickets: items.length ? items.reduce((sum, item) => sum + item.ticket_count, 0) / items.length : 0,
+  };
+  return { all, items, ticket_count: new Set(groupedRows.map(row => row.number)).size };
+}
+
+function emptySummary() {
+  return { shipments: 0, total_secs: 0, avg_secs: 0, median_secs: 0, max_secs: 0, avg_tickets: 0 };
+}
+
 // A shipment may have multiple processing legs in the same region. This
 // aggregation keeps each shipment-region visit intact, so comparisons between
 // one-process and multi-process flows are not distorted by ticket volume.
@@ -3839,8 +3903,8 @@ async function processLargeCSVFile(file) {
             return value == null ? '' : String(value);
           };
           const parentStmtFor = n => db.prepare(`INSERT OR IGNORE INTO parent
-            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason)
-            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id)
+            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const childStmtFor = n => db.prepare(`INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const shipStmtFor = n => db.prepare(`INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           const childShipStmtFor = n => db.prepare(`INSERT INTO child_ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
@@ -3857,6 +3921,7 @@ async function processLargeCSVFile(file) {
                 const agroup = norm(read(row, 'assignment_group')) || '(unassigned)';
                 const state = norm(read(row, 'state'));
                 const category = norm(read(row, 'category'));
+                const shipmentKeys = shipmentKeysForTask(read(row, 'shipment_id'));
                 const shortDesc = norm(read(row, 'short_desc'));
                 const timeWorked = parseTimeWorked(read(row, 'time_worked'));
                 if (source === 'Child Task') {
@@ -3869,10 +3934,10 @@ async function processLargeCSVFile(file) {
                   norm(read(row, 'sub_category')), source || '(empty)', norm(read(row, 'country')),
                   read(row, 'email').trim().toLowerCase(), norm(read(row, 'mailbox')), openedAt, openedTs,
                   timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')),
-                  norm(read(row, 'reason')));
-                for (const sid of shipmentKeysForTask(read(row, 'shipment_id'), category, read(row, 'quick_booking_id'))) ships.push(sid, number);
+                  norm(read(row, 'reason')), norm(read(row, 'quick_booking_id')), shipmentKeys.length ? 1 : 0);
+                for (const sid of shipmentKeys) ships.push(sid, number);
               }
-              if (parents.length) { const stmt = parentStmtFor(parents.length / 18); stmt.run(parents); stmt.free(); }
+              if (parents.length) { const stmt = parentStmtFor(parents.length / 20); stmt.run(parents); stmt.free(); }
               if (children.length) { const stmt = childStmtFor(children.length / 12); stmt.run(children); stmt.free(); }
               if (ships.length) { const stmt = shipStmtFor(ships.length / 2); stmt.run(ships); stmt.free(); }
               if (childShips.length) { const stmt = childShipStmtFor(childShips.length / 2); stmt.run(childShips); stmt.free(); }
@@ -4033,8 +4098,8 @@ async function processDBFile(file) {
         updateProgress('Building', `Building derived tables for ${file.name}...`);
         buildDerived(srcDB, 0);
       } else if (schemaVersion !== String(SCHEMA_VERSION)) {
-        // v12 changes shipment membership, so ship_link must be rebuilt rather
-        // than merely refreshing the rollups.
+        // v14 changes compact shipment/no-shipment fields, so derived tables
+        // must be rebuilt rather than merely refreshing the rollups.
         updateProgress('Upgrading',
           `Rebuilding shipment links for ${file.name} (schema ${schemaVersion || 'unknown'} → ${SCHEMA_VERSION})...`);
         buildDerived(srcDB, 0);
@@ -4169,6 +4234,7 @@ if (typeof window !== 'undefined') {
     getAssigneeTimeDetail,
     getCategoryStats,
     getQuickBookingShipmentAnalysis,
+    getQuickBookingNoShipmentAnalysis,
     getShipmentRegionFlowAnalysis,
     getShipmentAnalysisHotspots,
     getDescriptionMatchedShipmentAnalysis,
@@ -4246,6 +4312,8 @@ if (typeof window !== 'undefined') {
   .filters input:focus, .filters select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,113,202,0.15); }
   .filter-meta { font-size: 0.68rem; color: var(--text3); display: flex; justify-content: space-between; align-items: center; }
   .filter-meta button { border: 0; background: none; color: var(--blue); cursor: pointer; font-size: 0.68rem; padding: 0; }
+  .shipment-region-search { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text2); }
+  .shipment-region-search input { min-width: 210px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
   /* Quick Booking display controls: clear segmented choices rather than
      link-like actions. The selected value remains readable at a glance. */
   .qb-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 12px 0 14px; }
@@ -4304,6 +4372,25 @@ if (typeof window !== 'undefined') {
   .ms-opt.sel .box { background: var(--blue); border-color: var(--blue); }
   .ms-opt .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ms-opt .stats { font-size: 0.65rem; color: var(--text3); white-space: nowrap; }
+
+  /* Quick Booking table: checkbox filters keep selections open until Apply. */
+  .qb-table-filter { position: relative; min-width: 132px; }
+  .qb-table-filter summary { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 27px; padding: 3px 6px; list-style: none; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text2); cursor: pointer; font-size: 0.7rem; font-weight: 500; user-select: none; }
+  .qb-table-filter summary::-webkit-details-marker { display: none; }
+  .qb-table-filter summary::after { content: '⌄'; color: var(--text3); font-size: 0.78rem; line-height: 1; }
+  .qb-table-filter[open] summary { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(59,113,202,.13); }
+  .qb-table-filter[open] summary::after { transform: rotate(180deg); }
+  .qb-table-filter-menu { position: absolute; z-index: 25; top: calc(100% + 4px); left: 0; width: max-content; min-width: 210px; max-width: 340px; padding: 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); box-shadow: 0 8px 22px rgba(32,49,68,.18); }
+  .qb-table-filter-options { max-height: 225px; overflow: auto; }
+  .qb-table-filter-option { display: flex; align-items: center; gap: 7px; padding: 5px 4px; color: var(--text2); cursor: pointer; font-size: 0.7rem; line-height: 1.25; }
+  .qb-table-filter-option:hover { background: #eef4ff; }
+  .qb-table-filter-option input { accent-color: var(--blue); flex: 0 0 auto; }
+  .qb-table-filter-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qb-table-filter-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .qb-table-filter-actions button { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text2); cursor: pointer; font-size: 0.66rem; font-weight: 600; padding: 4px 7px; }
+  .qb-table-filter-actions .apply { border-color: var(--blue); background: var(--blue); color: #fff; }
+  .qb-table-filter-actions button:hover { border-color: var(--blue); color: var(--blue); }
+  .qb-table-filter-actions .apply:hover { background: #275cae; color: #fff; }
 
   /* Assignee Time by Group — collapsible group rows */
   .at-group { cursor: pointer; font-weight: 600; }
@@ -5831,7 +5918,7 @@ function renderBaselineTable() {
 // Quick Booking uses its own table state so filtering or sorting does not
 // cause the rest of the dashboard to rebuild.
 const quickBookingState = {
-  filters: { region: '', assignment_group: '', shipment_id: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: '', ticket_sequence: '' },
+  filters: { region: [], assignment_group: [], shipment_id: '', shipment_link: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: [], ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
   sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', categoryMatrixCategoryDir: 'desc', categoryMatrixSortRegion: '', categoryMatrixSelectedCategory: '', categoryMatrixFocusedRegion: '', categoryMatrixScrollRegion: '',
   page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', controlFocus: null,
@@ -5843,6 +5930,7 @@ let shipmentDistributionTimesMinutes = [];
 let shipmentDistributionBands = [];
 let shipmentDistributionByRegion = [];
 let overallEfficiencyHoverData = new Map();
+let quickBookingTeamAllocationChart = null;
 const shipmentThresholdOverlayPlugin = {
   id: 'shipmentThresholdOverlay',
   beforeDatasetsDraw(chart) {
@@ -5866,10 +5954,12 @@ const shipmentThresholdOverlayPlugin = {
   },
 };
 const descriptionMatchedAnalysisCache = new Map();
+const quickBookingNoShipmentAnalysisCache = new Map();
 const QUICK_BOOKING_COLS = [
   { key: 'region', label: 'Region', num: false },
   { key: 'assignment_group', label: 'Assignment Group', num: false },
   { key: 'shipment_id', label: 'Shipment ID', num: false },
+  { key: 'shipment_link', label: 'Shipment link', num: false },
   { key: 'case_type', label: 'Case', num: false },
   { key: 'ticket_count', label: 'Tickets', num: true },
   { key: 'total_secs', label: 'Total Time Worked', num: true },
@@ -5877,6 +5967,40 @@ const QUICK_BOOKING_COLS = [
   { key: 'reason', label: 'Reason', num: false },
   { key: 'ticket_sequence', label: 'Ticket sequence', num: false },
 ];
+const QUICK_BOOKING_MULTI_FILTER_KEYS = new Set(['region', 'assignment_group', 'reason']);
+const QUICK_BOOKING_TEAMS = [
+  { label: 'Team A · 15 FTE', fte: 15, regions: ['SZ'] },
+  { label: 'Team B · 16 FTE', fte: 16, regions: ['SH'] },
+  { label: 'Team C · 15 FTE', fte: 15, regions: ['TH', 'NB', 'AU', 'PL', 'DE', 'UK', 'NL', 'SE', 'EMEA'] },
+];
+
+function parseQuickBookingTimeFilter(value) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  if (!text) return null;
+  const match = /^(<=|>=|=>|=<|<|>|=)?\s*(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)?$/.exec(text);
+  if (!match) return { invalid: true };
+  const operator = match[1] === '=>' ? '>=' : match[1] === '=<' ? '<=' : (match[1] || '=');
+  const unit = match[3] || (quickBookingState.timeUnit === 'minutes' ? 'm' : 'h');
+  const multiplier = /^h/.test(unit) ? 3600 : /^m/.test(unit) ? 60 : 1;
+  return { operator, seconds: Number(match[2]) * multiplier };
+}
+
+function matchesQuickBookingFilter(key, value, filter) {
+  if (Array.isArray(filter)) return !filter.length || filter.includes(String(value == null ? '' : value));
+  const query = String(filter == null ? '' : filter).trim();
+  if (!query) return true;
+  if (key !== 'total_secs') {
+    return String(value == null ? '' : value).toLowerCase().includes(query.toLowerCase());
+  }
+  const numericFilter = parseQuickBookingTimeFilter(query);
+  if (!numericFilter || numericFilter.invalid) return false;
+  const seconds = Number(value) || 0;
+  if (numericFilter.operator === '>') return seconds > numericFilter.seconds;
+  if (numericFilter.operator === '>=') return seconds >= numericFilter.seconds;
+  if (numericFilter.operator === '<') return seconds < numericFilter.seconds;
+  if (numericFilter.operator === '<=') return seconds <= numericFilter.seconds;
+  return seconds === numericFilter.seconds;
+}
 
 function quickBookingFilter(key, value) {
   // Filtering redraws the table. Keep both ends of a text selection (not
@@ -5903,6 +6027,21 @@ function quickBookingFilter(key, value) {
   });
 }
 
+function quickBookingMultiFilterApply(key, filterMenu) {
+  if (!QUICK_BOOKING_MULTI_FILTER_KEYS.has(key) || !filterMenu) return;
+  quickBookingState.filters[key] = [...filterMenu.querySelectorAll('input[type="checkbox"]:checked')]
+    .map(input => input.value);
+  quickBookingState.page = 1;
+  renderQuickBookingSection();
+}
+
+function quickBookingMultiFilterClear(key) {
+  if (!QUICK_BOOKING_MULTI_FILTER_KEYS.has(key)) return;
+  quickBookingState.filters[key] = [];
+  quickBookingState.page = 1;
+  renderQuickBookingSection();
+}
+
 function sortQuickBooking(key) {
   if (quickBookingState.sort === key) quickBookingState.dir = quickBookingState.dir === 'asc' ? 'desc' : 'asc';
   else { quickBookingState.sort = key; quickBookingState.dir = key === 'ticket_count' || key === 'total_secs' ? 'desc' : 'asc'; }
@@ -5922,7 +6061,9 @@ function quickBookingPerPage(value) {
 }
 
 function clearQuickBookingTableFilters() {
-  Object.keys(quickBookingState.filters).forEach(key => { quickBookingState.filters[key] = ''; });
+  Object.keys(quickBookingState.filters).forEach(key => {
+    quickBookingState.filters[key] = QUICK_BOOKING_MULTI_FILTER_KEYS.has(key) ? [] : '';
+  });
   quickBookingState.page = 1;
   renderQuickBookingSection();
 }
@@ -6121,12 +6262,18 @@ function showOverallEfficiencyHover(region) {
   const data = overallEfficiencyHoverData.get(region);
   if (!card || !data) return;
   const rows = data.above.slice(0, 8).map(item => '<tr><td class="delay-rank">#' + item.slowest_rank + ' / ' + item.region_total + '</td><td><b>' + escHTML(item.category) + '</b></td><td class="time-value">' +
-    escHTML(item.time) + '</td><td class="baseline-value">' + escHTML(item.baseline) + '</td><td class="delay">+' +
+    escHTML(item.time) + '</td><td class="baseline-value">' + escHTML(item.baseline) + '</td><td class="num">' + item.shipments.toLocaleString() +
+    '<br><span class="gsm-pct">' + item.tickets.toLocaleString() + ' tickets</span></td><td class="delay">+' +
     item.delta.toFixed(1) + '%</td></tr>').join('');
   card.innerHTML = '<div class="qb-efficiency-hover-title"><b>' + escHTML(region) + '</b><span>' +
     data.above.length + ' ' + (data.above.length === 1 ? 'category' : 'categories') + ' above their baseline</span></div>' +
-    (rows ? '<table class="qb-efficiency-hover-table"><thead><tr><th>Slowest rank</th><th>Category</th><th>Time</th><th>Baseline</th><th>vs baseline</th></tr></thead><tbody>' + rows + '</tbody></table>' :
+    (rows ? '<table class="qb-efficiency-hover-table"><thead><tr><th>Slowest rank</th><th>Category</th><th>Time</th><th>Baseline</th><th>Volume</th><th>vs baseline</th></tr></thead><tbody>' + rows + '</tbody></table>' :
       '<div class="note" style="margin:6px 0 0">No categories are above their selected-statistic baseline in the current scope.</div>') +
+    (data.no_shipment_ids ? '<div class="note" style="margin:7px 0 0;padding-top:6px;border-top:1px solid var(--border)"><b>Included in this rank:</b> ' +
+      data.no_shipment_ids.toLocaleString() + ' Ticket Without Shipment ID Quick Booking ID' +
+      (data.no_shipment_ids === 1 ? '' : 's') + ' · ' + data.no_shipment_tickets.toLocaleString() +
+      ' tickets · total ' + data.no_shipment_time +
+      '. These remain outside the shipment-linked heatmap baseline.</div>' : '') +
     (data.above.length > 8 ? '<div class="note" style="margin:6px 0 0">Showing the 8 largest delays.</div>' : '');
 }
 
@@ -6168,6 +6315,12 @@ function renderQuickBookingSection() {
     analysis.agroup = '';
   }
   const data = window.App.getQuickBookingShipmentAnalysis(analysis);
+  const noShipmentKey = JSON.stringify(analysis);
+  if (!quickBookingNoShipmentAnalysisCache.has(noShipmentKey)) {
+    quickBookingNoShipmentAnalysisCache.set(noShipmentKey,
+      window.App.getQuickBookingNoShipmentAnalysis(analysis));
+  }
+  const noShipmentData = quickBookingNoShipmentAnalysisCache.get(noShipmentKey);
   const descriptionMatchKey = JSON.stringify(analysis);
   if (!descriptionMatchedAnalysisCache.has(descriptionMatchKey)) {
     descriptionMatchedAnalysisCache.set(descriptionMatchKey,
@@ -6182,27 +6335,66 @@ function renderQuickBookingSection() {
     ? time(quickBookingState.timeMetric === 'median' ? summary.median_secs
       : quickBookingState.timeMetric === 'max' ? summary.max_secs : summary.avg_secs) : '—';
   const ticketAvg = summary => summary.shipments ? summary.avg_tickets.toFixed(1) : '—';
+  // The headline is the combined Quick Booking workload. Shipment-linked
+  // groups remain Shipment IDs, while no-ID groups are grouped by Quick
+  // Booking ID first, so both contribute one comparable work-item duration.
+  const allWorkItems = [...data.items, ...noShipmentData.items];
+  const allWorkItemValues = allWorkItems.map(item => item.total_secs);
+  const overallWorkSummary = {
+    shipments: allWorkItems.length,
+    total_secs: allWorkItemValues.reduce((sum, value) => sum + value, 0),
+    avg_secs: allWorkItemValues.length
+      ? allWorkItemValues.reduce((sum, value) => sum + value, 0) / allWorkItemValues.length : 0,
+    median_secs: medianSecs(allWorkItemValues),
+    max_secs: allWorkItemValues.length ? Math.max(...allWorkItemValues) : 0,
+    avg_tickets: allWorkItems.length
+      ? allWorkItems.reduce((sum, item) => sum + item.ticket_count, 0) / allWorkItems.length : 0,
+  };
   const summaryCard = (label, summary, klass, note) =>
     '<div class="kpi ' + klass + '"><div class="kpi-label">' + label + '</div>' +
     '<div class="kpi-value">' + metric(summary) + '</div>' +
     '<div class="kpi-sub">' + summary.shipments.toLocaleString() + ' shipments · ' +
     ticketAvg(summary) + ' tickets/shipment' + (note ? ' · ' + note : '') + '</div></div>';
+  const overallWorkSummaryCard = '<div class="kpi info"><div class="kpi-label">' + metricLabel + ': all Quick Booking work</div>' +
+    '<div class="kpi-value">' + metric(overallWorkSummary) + '</div><div class="kpi-sub">' +
+    data.all.shipments.toLocaleString() + ' shipment IDs + ' + noShipmentData.all.shipments.toLocaleString() +
+    ' no-ID Quick Booking IDs · ' + ticketAvg(overallWorkSummary) + ' tickets/work item · total ' +
+    time(overallWorkSummary.total_secs) + '</div></div>';
+  const noShipmentSummaryCard = '<div class="kpi purple"><div class="kpi-label">Ticket Without Shipment ID</div>' +
+    '<div class="kpi-value">' + metric(noShipmentData.all) + '</div><div class="kpi-sub">' +
+    noShipmentData.all.shipments.toLocaleString() + ' Quick Booking IDs · ' + noShipmentData.ticket_count.toLocaleString() +
+    ' tickets · ' + metricLabel.toLowerCase() + ' total time per Quick Booking ID · total ' + time(noShipmentData.all.total_secs) + '</div></div>';
 
   const items = data.items.map(x => ({
     ...x,
+    shipment_link: 'Shipment ID',
     ticket_sequence: x.tickets.map(t => [t.number, t.state, t.opened_at, time(t.time_worked)].join(' · ')).join(' '),
   }));
+  const noShipmentTableItems = noShipmentData.items.map(x => ({
+    ...x,
+    shipment_link: 'Ticket Without Shipment ID',
+    is_no_shipment: true,
+    ticket_sequence: x.tickets.map(t => [t.number, t.state, t.opened_at, time(t.time_worked)].join(' · ')).join(' '),
+  }));
+  const allTableItems = [...items, ...noShipmentTableItems];
   const state = quickBookingState;
-  const visibleItems = items.filter(x => QUICK_BOOKING_COLS.every(c =>
-    String(x[c.key] == null ? '' : x[c.key]).toLowerCase().includes((state.filters[c.key] || '').trim().toLowerCase())));
+  // The separate ID filter is table-only. It must not change shipment KPIs,
+  // regional cards, or charts by silently mixing no-shipment IDs into them.
+  const rowMatchesQuickBookingFilters = (row, includeShipmentLink) =>
+    QUICK_BOOKING_COLS.filter(c => includeShipmentLink || c.key !== 'shipment_link')
+      .every(c => matchesQuickBookingFilter(c.key, row[c.key], state.filters[c.key]));
+  const visibleItems = items.filter(x => rowMatchesQuickBookingFilters(x, false));
+  const visibleTableItems = allTableItems.filter(x => rowMatchesQuickBookingFilters(x, true));
   const sortKey = state.sort;
   const dir = state.dir === 'asc' ? 1 : -1;
-  visibleItems.sort((a, b) => {
+  const sortRows = rows => rows.sort((a, b) => {
     const av = a[sortKey], bv = b[sortKey];
     const delta = typeof av === 'number' && typeof bv === 'number'
       ? av - bv : String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv), undefined, { numeric: true });
     return delta * dir || a.shipment_id.localeCompare(b.shipment_id);
   });
+  sortRows(visibleItems);
+  sortRows(visibleTableItems);
 
   // Summary cards deliberately use the filtered rows, so region totals remain
   // useful after narrowing the table by case, state, ticket sequence, etc.
@@ -6242,6 +6434,41 @@ function renderQuickBookingSection() {
     }
     regionTotals.set(x.region, r);
   }
+  const visibleNoShipmentEfficiencyItems = noShipmentTableItems.filter(item =>
+    rowMatchesQuickBookingFilters(item, false));
+  const noShipmentRegionTotals = new Map();
+  for (const item of visibleNoShipmentEfficiencyItems) {
+    const region = item.region || 'Other';
+    const total = noShipmentRegionTotals.get(region) || { ids: 0, tickets: 0, total_secs: 0, values: [] };
+    total.ids++;
+    total.tickets += item.ticket_count;
+    total.total_secs += item.total_secs;
+    total.values.push(item.total_secs);
+    noShipmentRegionTotals.set(region, total);
+  }
+  // The efficiency ranking compares completed units of work. Include
+  // Quick Booking tickets without a Shipment ID as their already-grouped
+  // Quick Booking IDs, while keeping the shipment-linked heatmap separate.
+  const overallEfficiencyTotals = new Map();
+  const addOverallEfficiencyItem = (item, isNoShipment) => {
+    const region = item.region || 'Other';
+    const total = overallEfficiencyTotals.get(region) || {
+      region, shipments: 0, shipment_ids: 0, no_shipment_ids: 0,
+      no_shipment_tickets: 0, no_shipment_secs: 0, tickets: 0, total_secs: 0, values: [],
+    };
+    total.shipments++;
+    if (isNoShipment) {
+      total.no_shipment_ids++;
+      total.no_shipment_tickets += item.ticket_count;
+      total.no_shipment_secs += item.total_secs;
+    } else total.shipment_ids++;
+    total.tickets += item.ticket_count;
+    total.total_secs += item.total_secs;
+    total.values.push(item.total_secs);
+    overallEfficiencyTotals.set(region, total);
+  };
+  for (const item of visibleItems) addOverallEfficiencyItem(item, false);
+  for (const item of visibleNoShipmentEfficiencyItems) addOverallEfficiencyItem(item, true);
   const regionMetric = (values, secs, n) => {
     if (!n) return '—';
     if (quickBookingState.timeMetric === 'average') return time(secs / n);
@@ -6300,8 +6527,15 @@ function renderQuickBookingSection() {
   const distributionScope = state.selectedRegion ? 'Region · ' + state.selectedRegion : 'All visible regions';
   const distributionMedian = distributionItems.length
     ? time(medianSecs(distributionItems.map(item => item.total_secs))) : '—';
-  const regionCards = [...regionTotals.values()].sort((a, b) => b.total_secs - a.total_secs || a.region.localeCompare(b.region)).map(r =>
-    '<button type="button" class="kpi info qb-region-card' + (state.selectedRegion === r.region ? ' is-selected' : '') +
+  const regionCards = [...regionTotals.values()].sort((a, b) => b.total_secs - a.total_secs || a.region.localeCompare(b.region)).map(r => {
+    const noShipment = noShipmentRegionTotals.get(r.region) || { ids: 0, tickets: 0, total_secs: 0, values: [] };
+    const overallWork = {
+      jobs: r.shipments + noShipment.ids,
+      tickets: r.tickets + noShipment.tickets,
+      total_secs: r.total_secs + noShipment.total_secs,
+      values: r.values.concat(noShipment.values),
+    };
+    return '<button type="button" class="kpi info qb-region-card' + (state.selectedRegion === r.region ? ' is-selected' : '') +
       '" data-region="' + attr(r.region) + '" aria-pressed="' + (state.selectedRegion === r.region ? 'true' : 'false') +
       '" onclick="quickBookingRegion(this.dataset.region)"><div class="kpi-label">Region · ' + escHTML(r.region) +
       (state.selectedRegion === r.region ? ' · selected' : '') + '</div>' +
@@ -6318,11 +6552,16 @@ function renderQuickBookingSection() {
         '<div><div class="kpi-label" style="font-size:0.62rem">Median: Other sequences</div>' +
           '<div class="kpi-value" style="font-size:1.3rem">' + regionMedian(r.other_values) + '</div>' +
           '<div class="kpi-sub">median · ' + r.other_shipments + ' shipments</div></div>' +
+        '<div style="grid-column:1 / -1;border-top:1px solid var(--border);padding-top:8px"><div class="kpi-label" style="font-size:0.62rem">Ticket Without Shipment ID</div>' +
+          '<div class="kpi-value" style="font-size:1.3rem">' + regionMetric(noShipment.values, noShipment.total_secs, noShipment.ids) + '</div>' +
+          '<div class="kpi-sub">' + metricLabel.toLowerCase() + ' total time per Quick Booking ID · ' + noShipment.ids.toLocaleString() + ' IDs · ' + noShipment.tickets.toLocaleString() + ' tickets</div></div>' +
       '</div>' +
       regionSpread(r) +
-      '<div class="kpi-sub">' + r.shipments.toLocaleString() + ' shipments · ' + r.tickets.toLocaleString() + ' tickets · ' +
-        'total: ' + time(r.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
-        regionMetric(r.values, r.total_secs, r.shipments) + '</div></button>').join('');
+      '<div class="kpi-sub">' + overallWork.jobs.toLocaleString() + ' jobs · ' + overallWork.tickets.toLocaleString() + ' tickets · ' +
+        'total: ' + time(overallWork.total_secs) + ' · overall ' + metricLabel.toLowerCase() + ': ' +
+        regionMetric(overallWork.values, overallWork.total_secs, overallWork.jobs) +
+        (noShipment.ids ? ' · includes ' + noShipment.ids.toLocaleString() + ' no-ID QB IDs' : '') + '</div></button>';
+  }).join('');
   const distributionSection = '<div class="chart-grid qb-distribution-card"><div class="chart-card full">' +
     '<h3>Shipment time distribution · ' + escHTML(distributionScope) + '</h3>' +
     '<div class="note">Bars show each total-time band&apos;s share of shipments (also printed below the band); hover to see the shipment count. The line shows the cumulative share of shipments completed within that band. ' +
@@ -6467,7 +6706,7 @@ function renderQuickBookingSection() {
       '<span class="qb-heatmap-scale" aria-hidden="true"></span><span>Above baseline</span>' +
       '<span>· red = longer and blue = shorter than that category&apos;s ' + escHTML(metricLabel.toLowerCase()) + ' time</span></div>'
     : '';
-  const overallRegionEfficiency = [...regionTotals.values()].filter(region => region.shipments)
+  const overallRegionEfficiency = [...overallEfficiencyTotals.values()].filter(region => region.shipments)
     .map(region => ({ ...region, metric_secs: selectedMetricSeconds(region) }))
     .sort((a, b) => a.metric_secs - b.metric_secs || b.shipments - a.shipments || a.region.localeCompare(b.region));
   overallEfficiencyHoverData = new Map(overallRegionEfficiency.map(region => {
@@ -6478,21 +6717,102 @@ function renderQuickBookingSection() {
       const delta = baseline > 0 ? (value - baseline) / baseline : 0;
       const rank = (categorySlowestRanks.get(row.category) || new Map()).get(region.region);
       return cell && cell.shipments && delta > .0001 ? {
-        category: row.category, time: regionMetric(cell.values, cell.total_secs, cell.shipments), baseline: time(baseline), delta: Math.abs(delta * 100),
+        category: row.category, time: regionMetric(cell.values, cell.total_secs, cell.shipments), baseline: time(baseline),
+        shipments: cell.shipments, tickets: cell.tickets, delta: Math.abs(delta * 100),
         slowest_rank: rank ? rank.rank : '—', region_total: rank ? rank.total : '—',
       } : null;
     }).filter(Boolean).sort((a, b) => b.delta - a.delta || a.category.localeCompare(b.category));
-    return [region.region, { above }];
+    return [region.region, {
+      above,
+      no_shipment_ids: region.no_shipment_ids,
+      no_shipment_tickets: region.no_shipment_tickets,
+      no_shipment_time: time(region.no_shipment_secs),
+    }];
   }));
   const overallEfficiencySection = '<div class="chart-grid qb-efficiency-ranking"><div class="chart-card full">' +
     '<h3>Overall processing-time efficiency · Country / Region</h3>' +
-    '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the heatmap. Shipment volume is shown to help assess the result.</div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipments</th><th class="num">Total time</th></tr></thead><tbody>' +
+    '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the shipment-linked heatmap. Volume is shown to help assess the result.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th><th class="num">Total time</th></tr></thead><tbody>' +
     (overallRegionEfficiency.map((region, index) => '<tr tabindex="0" role="button" class="qb-efficiency-row' + (index === 0 ? ' efficiency-best' : '') + '" onmouseenter="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onfocus="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onclick="focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')}" aria-label="Show details and focus ' + attr(region.region) + ' in the heatmap"><td class="num efficiency-rank">#' + (index + 1) +
       '</td><td><b>' + escHTML(region.region) + '</b></td><td class="num"><b>' + regionMetric(region.values, region.total_secs, region.shipments) +
-      '</b></td><td class="num">' + region.shipments.toLocaleString() + '</td><td class="num">' + time(region.total_secs) + '</td></tr>').join('') ||
+      '</b></td><td class="num">' + region.shipment_ids.toLocaleString() + ' shipment IDs' +
+      (region.no_shipment_ids ? '<br><span class="gsm-pct">+ ' + region.no_shipment_ids.toLocaleString() + ' no-ID QB IDs</span>' : '') +
+      '</td><td class="num">' + time(region.total_secs) + '</td></tr>').join('') ||
       '<tr><td colspan="5" style="color:var(--text3)">No countries or regions match the current filters.</td></tr>') +
     '</tbody></table></div><div class="qb-efficiency-hover-card" id="overallEfficiencyHoverCard" aria-live="polite">Hover a Country / Region row to see categories above their baseline.</div></div></div>';
+  const isQuickBookingScope = norm(analysis.category).toLowerCase() === 'quick booking';
+  const teamAllocation = isQuickBookingScope ? QUICK_BOOKING_TEAMS.map(team => {
+    const cells = team.regions.map(region => overallEfficiencyTotals.get(region)).filter(Boolean);
+    const values = cells.flatMap(cell => cell.values);
+    const total_secs = cells.reduce((sum, cell) => sum + cell.total_secs, 0);
+    const work_items = cells.reduce((sum, cell) => sum + cell.shipments, 0);
+    const ticket_count = cells.reduce((sum, cell) => sum + cell.tickets, 0);
+    const no_shipment_ids = cells.reduce((sum, cell) => sum + cell.no_shipment_ids, 0);
+    const no_shipment_secs = cells.reduce((sum, cell) => sum + cell.no_shipment_secs, 0);
+    const shipment_ids = cells.reduce((sum, cell) => sum + cell.shipment_ids, 0);
+    const shipment_secs = total_secs - no_shipment_secs;
+    const shipment_values = visibleItems.filter(item => team.regions.includes(item.region))
+      .map(item => item.total_secs);
+    const no_shipment_values = cells.flatMap(cell => {
+      if (!cell.no_shipment_ids) return [];
+      const noShipmentItems = visibleNoShipmentEfficiencyItems.filter(item => item.region === cell.region);
+      return noShipmentItems.map(item => item.total_secs);
+    });
+    const metric_secs = selectedMetricSeconds({ shipments: work_items, total_secs, values });
+    return { ...team, cells, values, total_secs, work_items, ticket_count, shipment_ids, shipment_secs, shipment_values, no_shipment_ids, no_shipment_secs, no_shipment_values, metric_secs };
+  }) : [];
+  const teamRegionBreakdown = teamAllocation.flatMap(team => {
+    const regionRows = team.regions.map(region => {
+      const cell = overallEfficiencyTotals.get(region) || {
+        shipments: 0, tickets: 0, no_shipment_ids: 0, total_secs: 0, values: [],
+      };
+      return {
+        team: team.label, region, is_aggregate: false, jobs: cell.shipments,
+        tickets: cell.tickets, shipment_ids: cell.shipment_ids,
+        shipment_secs: cell.total_secs - cell.no_shipment_secs,
+        shipment_values: visibleItems.filter(item => item.region === region).map(item => item.total_secs),
+        no_shipment_ids: cell.no_shipment_ids,
+        total_secs: cell.total_secs, no_shipment_secs: cell.no_shipment_secs,
+        no_shipment_values: visibleNoShipmentEfficiencyItems.filter(item => item.region === region)
+          .map(item => item.total_secs),
+        metric_secs: selectedMetricSeconds(cell),
+      };
+    });
+    regionRows.push({
+      team: team.label, region: 'Team aggregate', is_aggregate: true, jobs: team.work_items,
+      tickets: team.ticket_count, shipment_ids: team.shipment_ids,
+      shipment_secs: team.shipment_secs, shipment_values: team.shipment_values,
+      no_shipment_ids: team.no_shipment_ids,
+      total_secs: team.total_secs, no_shipment_secs: team.no_shipment_secs,
+      no_shipment_values: team.no_shipment_values, metric_secs: team.metric_secs,
+    });
+    return regionRows;
+  });
+  const teamAllocationSection = isQuickBookingScope ? '<div class="chart-grid"><div class="chart-card full">' +
+    '<h3>Quick Booking team work allocation</h3>' +
+    '<div class="note">Only the named teams are shown. A <b>job</b> is one Shipment ID or, where no Shipment ID exists, one grouped Quick Booking ID. Every time figure is the selected <b>' +
+      escHTML(metricLabel.toLowerCase()) + ' time per job</b>, calculated from each job&apos;s total logged time—not from individual ticket times. Ticket Without Shipment ID work is included.</div>' +
+    '<div class="chart-wrap tall"><canvas id="quickBookingTeamAllocationChart"></canvas></div>' +
+    '<div class="tbl-wrap" style="margin-top:8px"><table class="gtable"><thead><tr><th>Team</th><th>Regions included</th><th class="num">Jobs</th><th class="num">Tickets / job</th><th class="num">' +
+      escHTML(metricLabel) + ' time / job</th><th class="num">With Shipment ID QB ' + escHTML(metricLabel) + ' / job</th><th class="num">No-ID QB ' + escHTML(metricLabel) + ' / job</th><th class="num">No-ID QB IDs</th><th class="num">Tickets</th></tr></thead><tbody>' +
+      teamAllocation.map(team => '<tr><td><b>' + escHTML(team.label) + '</b></td><td>' + escHTML(team.regions.join(', ')) + '</td><td class="num">' +
+        team.work_items.toLocaleString() + '</td><td class="num">' + (team.work_items ? (team.ticket_count / team.work_items).toFixed(1) : '—') + '</td><td class="num"><b>' + time(team.metric_secs) + '</b></td><td class="num">' +
+        regionMetric(team.shipment_values, team.shipment_secs, team.shipment_ids) + '</td><td class="num">' +
+        regionMetric(team.no_shipment_values, team.no_shipment_secs, team.no_shipment_ids) + '</td><td class="num">' +
+        team.no_shipment_ids.toLocaleString() + '</td><td class="num">' + team.ticket_count.toLocaleString() + '</td></tr>').join('') +
+      '</tbody></table></div>' +
+    '<h4 style="font-size:0.78rem;margin:14px 0 6px">Team allocation by Country / Region</h4>' +
+    '<div class="note" style="margin-bottom:7px">This breakdown includes every listed Country / Region—particularly all Team C regions—and finishes each team with its aggregate.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Team</th><th>Country / Region</th><th class="num">Jobs</th><th class="num">Tickets / job</th><th class="num">' +
+      escHTML(metricLabel) + ' time / job</th><th class="num">With Shipment ID QB ' + escHTML(metricLabel) + ' / job</th><th class="num">No-ID QB ' + escHTML(metricLabel) + ' / job</th><th class="num">Total time</th><th class="num">No-ID QB IDs</th><th class="num">Tickets</th></tr></thead><tbody>' +
+      teamRegionBreakdown.map(row => '<tr' + (row.is_aggregate ? ' style="background:#eef4ff"' : '') + '><td>' +
+        (row.is_aggregate ? '<b>' + escHTML(row.team) + '</b>' : escHTML(row.team)) + '</td><td><b>' + escHTML(row.region) + '</b></td><td class="num">' +
+        row.jobs.toLocaleString() + '</td><td class="num">' + (row.jobs ? (row.tickets / row.jobs).toFixed(1) : '—') + '</td><td class="num"><b>' + time(row.metric_secs) + '</b></td><td class="num">' +
+        regionMetric(row.shipment_values, row.shipment_secs, row.shipment_ids) + '</td><td class="num">' +
+        regionMetric(row.no_shipment_values, row.no_shipment_secs, row.no_shipment_ids) + '</td><td class="num">' +
+        time(row.total_secs) + '</td><td class="num">' + row.no_shipment_ids.toLocaleString() + '</td><td class="num">' +
+        row.tickets.toLocaleString() + '</td></tr>').join('') +
+      '</tbody></table></div></div></div>' : '';
   const categoryRegionSection = '<div class="chart-grid qb-category-region"><div class="chart-card full">' +
     '<h3>Shipment, ticket and time heatmap · Category × Country / Region</h3>' +
     '<div class="note">Each cell shows distinct shipments, tickets, then the selected ' + escHTML(metricLabel.toLowerCase()) + ' time. Click <b>Category</b> to rank categories across all regions, or click an individual <b>region name</b> to rank categories within that region. Click again to reverse the order.' + selectedCategoryNote + ' Category time uses each shipment&apos;s ticket time in that category. A shipment is counted once per category/region cell even if it contains multiple tickets in that category; the Total row uses distinct shipments for each region and all selected shipment time. This view follows the current Shipment Analysis scope and table filters.</div>' +
@@ -6519,10 +6839,10 @@ function renderQuickBookingSection() {
         }).join('') +
         categoryVolumeCell(categoryRegionTotals) + '</tr></tfoot></table></div></div></div>';
 
-  const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.perPage));
+  const totalPages = Math.max(1, Math.ceil(visibleTableItems.length / state.perPage));
   if (state.page > totalPages) state.page = totalPages;
   const pageStart = (state.page - 1) * state.perPage;
-  const tableItems = visibleItems.slice(pageStart, pageStart + state.perPage);
+  const tableItems = visibleTableItems.slice(pageStart, pageStart + state.perPage);
   const rows = tableItems.map((x, index) => {
     const tag = x.single_complete ? '<span class="b-verified">single completed</span>'
       : x.on_hold_then_complete && x.closed_incomplete_then_complete ? '<span class="p-rapid">on hold + closed incomplete → completed</span>'
@@ -6535,11 +6855,12 @@ function renderQuickBookingSection() {
       ' · ' + time(t.time_worked) + '</div>').join('');
     return '<tr><td class="num">' + (pageStart + index + 1).toLocaleString() + '</td><td>' + escHTML(x.region) + '</td><td>' + escHTML(x.assignment_group) + '</td>' +
       '<td><b>' + escHTML(x.shipment_id) + '</b></td>' +
+      '<td>' + (x.is_no_shipment ? '<span class="b-unverified">Ticket Without Shipment ID</span>' : '<span class="b-verified">Shipment ID</span>') + '</td>' +
       '<td>' + tag + '</td><td class="num">' + x.ticket_count + '</td>' +
       '<td class="num"><b>' + time(x.total_secs) + '</b></td>' +
       '<td>' + escHTML(x.latest_state || '—') + '</td><td>' + escHTML(x.reason || '—') + '</td>' +
       '<td style="font-size:0.7rem">' + tickets + '</td></tr>';
-  }).join('') || '<tr><td colspan="10" style="color:var(--text3)">No shipments match these filters.</td></tr>';
+  }).join('') || '<tr><td colspan="' + (QUICK_BOOKING_COLS.length + 1) + '" style="color:var(--text3)">No records match these filters.</td></tr>';
 
   const headers = QUICK_BOOKING_COLS.map(c => {
     const active = state.sort === c.key;
@@ -6547,19 +6868,41 @@ function renderQuickBookingSection() {
       c.label + (active ? (state.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '') + '</th>';
   }).join('');
   const dropdownFilter = key => {
-    const values = [...new Set(items.map(x => x[key]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
-    const filterLabel = key === 'case_type' ? 'Case' : key === 'reason' ? 'Reason' : 'Latest State';
+    const values = [...new Set(allTableItems.map(x => x[key]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+    const filterLabel = key === 'case_type' ? 'Case' : key === 'shipment_link' ? 'Shipment link' : 'Latest State';
     return '<select aria-label="Filter ' + filterLabel + '" data-qb-filter="' + key + '" ' +
       'onchange="quickBookingFilter(\'' + key + '\', this.value)" style="width:100%;min-width:110px;font-size:0.7rem;padding:3px 5px">' +
       '<option value="">All</option>' + values.map(v => '<option value="' + attr(v) + '"' +
         (state.filters[key] === v ? ' selected' : '') + '>' + escHTML(v) + '</option>').join('') + '</select>';
   };
+  const multiCheckboxFilter = key => {
+    const values = [...new Set(allTableItems.map(x => x[key]).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b)));
+    const selected = Array.isArray(state.filters[key]) ? state.filters[key] : [];
+    const label = key === 'assignment_group' ? 'Assignment Group' : key === 'region' ? 'Region' : 'Reason';
+    const selectionLabel = selected.length ? selected.length + ' selected' : 'All';
+    return '<details class="qb-table-filter"><summary aria-label="Filter ' + label + '">' +
+      escHTML(selectionLabel) + '</summary><div class="qb-table-filter-menu">' +
+      '<div class="qb-table-filter-options">' + values.map(value =>
+        '<label class="qb-table-filter-option"><input type="checkbox" value="' + attr(value) + '"' +
+        (selected.includes(value) ? ' checked' : '') + '><span title="' + attr(value) + '">' + escHTML(value) + '</span></label>'
+      ).join('') + '</div><div class="qb-table-filter-actions">' +
+      '<button type="button" onclick="quickBookingMultiFilterClear(\'' + key + '\')">Clear</button>' +
+      '<button type="button" class="apply" onclick="quickBookingMultiFilterApply(\'' + key + '\', this.closest(\'details\'))">Apply</button>' +
+      '</div></div></details>';
+  };
   const filters = '<th></th>' + QUICK_BOOKING_COLS.map(c => {
-    if (c.key === 'case_type' || c.key === 'latest_state' || c.key === 'reason') {
+    if (QUICK_BOOKING_MULTI_FILTER_KEYS.has(c.key)) {
+      return '<th class="' + (c.num ? 'num' : '') + '">' + multiCheckboxFilter(c.key) + '</th>';
+    }
+    if (c.key === 'case_type' || c.key === 'latest_state' || c.key === 'shipment_link') {
       return '<th class="' + (c.num ? 'num' : '') + '">' + dropdownFilter(c.key) + '</th>';
     }
+    const isTimeFilter = c.key === 'total_secs';
     return '<th class="' + (c.num ? 'num' : '') + '"><input aria-label="Filter ' + c.label + '" ' +
-      'placeholder="Filter..." value="' + attr(state.filters[c.key]) + '" ' +
+      'placeholder="' + (isTimeFilter ? 'e.g. >2 hrs' : 'Filter...') + '" ' +
+      (isTimeFilter ? 'title="Use >, >=, =>, <, <=, or =; e.g. >2 hrs or <=30 min" inputmode="decimal" ' : '') +
+      'value="' + attr(state.filters[c.key]) + '" ' +
       'data-qb-filter="' + c.key + '" ' +
       'oninput="quickBookingFilter(\'' + c.key + '\', this.value)" ' +
       'style="width:100%;min-width:72px;font-size:0.7rem;padding:3px 5px"></th>';
@@ -6684,20 +7027,22 @@ function renderQuickBookingSection() {
     timeControls +
     descriptionMatchSection +
     '<div class="kpi-row">' +
-      summaryCard(metricLabel + ': all shipments', data.all, 'info', 'total ' + time(data.all.total_secs)) +
+      overallWorkSummaryCard +
       summaryCard(metricLabel + ': Single Closed Complete', data.single_complete, 'green', 'one ticket only') +
+      noShipmentSummaryCard +
       summaryCard(metricLabel + ': On Hold → Complete', data.on_hold_then_complete, 'danger', 'multi-ticket sequence') +
       summaryCard(metricLabel + ': Closed Incomplete → Closed Complete', data.closed_incomplete_then_complete, 'warn', 'multi-ticket sequence') +
       summaryCard(metricLabel + ': Other sequences', data.other, 'warn', '') +
     '</div>' +
-    '<div class="note" style="margin-top:10px">Region is taken from the assignment group of the shipment&apos;s latest opened ticket. Region cards reflect the table filters.</div>' +
+    '<div class="note" style="margin-top:10px">“Ticket Without Shipment ID” first combines all no-shipment tickets with the same Quick Booking ID, then calculates the selected statistic from each grouped work item&apos;s <b>total</b> time—not from individual ticket times. Those groups are included in <b>all Quick Booking work</b> above, while remaining separate from shipment-linked sequence metrics, charts, and region cards. They are also available in the detailed table with their own pill and filter. Region is taken from the assignment group of each grouped work item&apos;s latest opened ticket.</div>' +
     '<div class="kpi-row" style="margin-top:10px">' + regionCards + '</div>' +
     distributionSection +
     overallEfficiencySection +
+    teamAllocationSection +
     categoryRegionSection +
-    '<div class="filter-meta"><span>' + (visibleItems.length ? (pageStart + 1).toLocaleString() + '–' +
-      Math.min(pageStart + state.perPage, visibleItems.length).toLocaleString() : '0') +
-      ' of ' + visibleItems.length.toLocaleString() + ' matching shipments (' + items.length.toLocaleString() + ' in analysis scope)</span>' +
+    '<div class="filter-meta"><span>' + (visibleTableItems.length ? (pageStart + 1).toLocaleString() + '–' +
+      Math.min(pageStart + state.perPage, visibleTableItems.length).toLocaleString() : '0') +
+      ' of ' + visibleTableItems.length.toLocaleString() + ' matching records (' + allTableItems.length.toLocaleString() + ' in table scope)</span>' +
       '<label style="display:flex;align-items:center;gap:4px">Rows <select aria-label="Rows per page" onchange="quickBookingPerPage(this.value)">' +
         [100, 250, 500, 1000].map(n => '<option value="' + n + '"' + (state.perPage === n ? ' selected' : '') + '>' + n + '</option>').join('') +
       '</select></label>' +
@@ -6709,6 +7054,36 @@ function renderQuickBookingSection() {
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
   renderShipmentTimeDistribution(distributionItems, time);
   updateShipmentThresholdMatrix();
+  if (quickBookingTeamAllocationChart) {
+    quickBookingTeamAllocationChart.destroy();
+    quickBookingTeamAllocationChart = null;
+  }
+  const teamAllocationCanvas = document.getElementById('quickBookingTeamAllocationChart');
+  if (teamAllocationCanvas && teamAllocation.length) {
+    const unitLabel = state.timeUnit === 'minutes' ? 'minutes' : 'hours';
+    quickBookingTeamAllocationChart = new Chart(teamAllocationCanvas, {
+      type: 'bar',
+      data: {
+        labels: teamAllocation.map(team => team.label),
+        datasets: [
+          { label: 'Jobs', data: teamAllocation.map(team => team.work_items), yAxisID: 'count', backgroundColor: 'rgba(59,113,202,.78)', borderRadius: 5 },
+          { label: metricLabel + ' time per job (' + unitLabel + ')', data: teamAllocation.map(team => state.timeUnit === 'minutes' ? team.metric_secs / 60 : team.metric_secs / 3600), yAxisID: 'time', backgroundColor: 'rgba(13,148,136,.78)', borderRadius: 5 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } }, tooltip: { callbacks: { afterBody: items => {
+          const team = teamAllocation[items[0].dataIndex];
+          return ['Regions: ' + team.regions.join(', '), team.no_shipment_ids.toLocaleString() + ' no-ID Quick Booking IDs', team.ticket_count.toLocaleString() + ' tickets'];
+        } } } },
+        scales: {
+          x: { grid: { display: false } },
+          count: { position: 'left', beginAtZero: true, title: { display: true, text: 'Jobs' }, ticks: { precision: 0 } },
+          time: { position: 'right', beginAtZero: true, title: { display: true, text: metricLabel + ' time per job (' + unitLabel + ')' }, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+  }
   if (quickBookingState.controlFocus) {
     const focused = el.querySelector('[data-qb-control="' + quickBookingState.controlFocus + '"] button.active');
     if (focused) focused.focus();
@@ -6729,7 +7104,7 @@ function renderQuickBookingSection() {
 
 const shipmentRegionState = {
   region: '', process: '', complexity: 'all', sort: 'selected_process_secs', dir: 'desc',
-  page: 1, perPage: 100, timeUnit: 'hours', statistic: 'average', selectedTiming: 'majority',
+  page: 1, perPage: 100, timeUnit: 'hours', statistic: 'average', selectedTiming: 'majority', shipment_id: '',
 };
 let shipmentRegionFlowCache = null;
 let shipmentRegionFlowChart = null;
@@ -6739,14 +7114,28 @@ const shipmentRegionTime = secs => shipmentRegionState.timeUnit === 'minutes'
   ? (secs / 60).toFixed(1) + 'm' : (secs / 3600).toFixed(2) + 'h';
 
 function shipmentRegionFilter(key, value) {
+  const active = document.activeElement;
+  const restoreShipmentSearch = active && active.id === 'shipmentRegionShipmentIdFilter';
+  const selectionStart = restoreShipmentSearch ? active.selectionStart : null;
+  const selectionEnd = restoreShipmentSearch ? active.selectionEnd : null;
   shipmentRegionState[key] = value;
   shipmentRegionState.page = 1;
   renderShipmentRegionSection();
+  if (restoreShipmentSearch) requestAnimationFrame(() => {
+    const input = document.getElementById('shipmentRegionShipmentIdFilter');
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(selectionStart, selectionEnd);
+  });
 }
 
 function shipmentRegionSort(key) {
   if (shipmentRegionState.sort === key) shipmentRegionState.dir = shipmentRegionState.dir === 'asc' ? 'desc' : 'asc';
   else { shipmentRegionState.sort = key; shipmentRegionState.dir = key === 'shipment_id' || key === 'region' || key === 'process_path' ? 'asc' : 'desc'; }
+  // Sort the complete filtered flow set, then return to its first page. This
+  // prevents a sort initiated on page 2+ from looking like it only affected
+  // that page rather than the full database scope.
+  shipmentRegionState.page = 1;
   renderShipmentRegionSection();
 }
 
@@ -6855,7 +7244,9 @@ function renderShipmentRegionSection() {
       '<td class="num">' + stat(row.all) + '</td><td class="num">' + stat(row.single) + '</td><td class="num">' + stat(row.multi) + '</td><td class="num">' + selectedTimingHtml + '</td><td class="num">' + deltaHtml + '</td></tr>';
   }).join('') || '<tr><td colspan="7" style="color:var(--text3)">No regional flows include this process.</td></tr>';
 
-  const sortedFlows = [...visibleFlows].sort((a, b) => {
+  const shipmentIdFilter = norm(state.shipment_id).toLowerCase();
+  const sortedFlows = visibleFlows.filter(flow => !shipmentIdFilter ||
+    String(flow.shipment_id || '').toLowerCase().includes(shipmentIdFilter)).sort((a, b) => {
     const av = a[state.sort], bv = b[state.sort];
     const delta = typeof av === 'number' && typeof bv === 'number'
       ? av - bv : String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv), undefined, { numeric: true });
@@ -6880,7 +7271,7 @@ function renderShipmentRegionSection() {
     '<div class="kpi-row"><div class="kpi info"><div class="kpi-label">Flows containing ' + escHTML(selectedProcess) + '</div><div class="kpi-value">' + visibleFlows.length.toLocaleString() + '</div><div class="kpi-sub">across ' + summary.shipments.toLocaleString() + ' shipments</div></div><div class="kpi purple"><div class="kpi-label">' + statisticLabel + ' ' + escHTML(selectedProcess) + ' time / flow</div><div class="kpi-value">' + (summary.flows ? time(processStatistic(summary)) : '—') + '</div><div class="kpi-sub">same process in every row</div></div><div class="kpi"><div class="kpi-label">With other processes</div><div class="kpi-value">' + multiFlows.length.toLocaleString() + '</div><div class="kpi-sub">' + (visibleFlows.length ? (100 * multiFlows.length / visibleFlows.length).toFixed(1) : 0) + '% of selected flows</div></div></div><div class="chart-wrap tall"><canvas id="shipmentRegionFlowChart"></canvas></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>' + statisticLabel + ' shipment time by Country / Region</h3><div class="note">Overall ' + statisticLabel.toLowerCase() + ' total logged time for each shipment-region flow, across <b>all</b> processes. This is independent of the selected category above. A shipment that visits multiple regions is counted once in every region it visits.</div><div class="chart-wrap tall"><canvas id="shipmentRegionAverageTimeChart"></canvas></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>' + escHTML(selectedProcess) + ' by Country / Region</h3><div class="note">“Only this process” means the shipment-region flow contains no other category. “With other processes” includes A→B, A→B→C, etc. The <b>Selected timing</b> column uses the route with the most flows in each region by default; use the selector to force either route type.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country / Region</th><th class="num">Shipments</th><th class="num">' + statisticLabel + ' selected-process time</th><th class="num">Only this process</th><th class="num">With other processes</th><th class="num">Selected timing</th><th class="num">Other − only</th></tr></thead><tbody>' + comparisonRows + '</tbody></table></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>' + escHTML(selectedProcess) + ' shipment-region flows</h3><div class="note">Click a column to sort. Process Path shows the surrounding categories; the selected-process time remains the time for <b>' + escHTML(selectedProcess) + '</b> only.</div><div class="filter-meta"><span>' + (sortedFlows.length ? (start + 1).toLocaleString() + '–' + Math.min(start + state.perPage, sortedFlows.length).toLocaleString() : '0') + ' of ' + sortedFlows.length.toLocaleString() + ' flows</span><button onclick="shipmentRegionPage(' + (state.page - 1) + ')"' + (state.page <= 1 ? ' disabled' : '') + '>← Prev</button><span>Page ' + state.page + ' of ' + totalPages + '</span><button onclick="shipmentRegionPage(' + (state.page + 1) + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>Next →</button></div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="shipmentRegionSort(\'shipment_id\')" style="cursor:pointer">Shipment ID' + arrow('shipment_id') + '</th><th onclick="shipmentRegionSort(\'region\')" style="cursor:pointer">Country / Region' + arrow('region') + '</th><th class="num" onclick="shipmentRegionSort(\'process_count\')" style="cursor:pointer">Distinct processes' + arrow('process_count') + '</th><th onclick="shipmentRegionSort(\'process_path\')" style="cursor:pointer">Process path</th><th class="num" onclick="shipmentRegionSort(\'selected_process_tickets\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' tickets' + arrow('selected_process_tickets') + '</th><th class="num" onclick="shipmentRegionSort(\'selected_process_secs\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' time' + arrow('selected_process_secs') + '</th><th class="num" onclick="shipmentRegionSort(\'total_secs\')" style="cursor:pointer">Total flow time' + arrow('total_secs') + '</th></tr></thead><tbody>' + flowRows + '</tbody></table></div></div></div>';
+    '<div class="chart-grid"><div class="chart-card full"><h3>' + escHTML(selectedProcess) + ' shipment-region flows</h3><div class="note">Click a column to sort the <b>entire filtered flow set</b>, then pagination is applied. Process Path shows the surrounding categories; the selected-process time remains the time for <b>' + escHTML(selectedProcess) + '</b> only.</div><div class="filter-meta"><label class="shipment-region-search">Shipment ID <input id="shipmentRegionShipmentIdFilter" type="search" value="' + attr(state.shipment_id) + '" placeholder="Filter shipment ID…" autocomplete="off" oninput="shipmentRegionFilter(\'shipment_id\', this.value)"></label><span>' + (sortedFlows.length ? (start + 1).toLocaleString() + '–' + Math.min(start + state.perPage, sortedFlows.length).toLocaleString() : '0') + ' of ' + sortedFlows.length.toLocaleString() + ' flows</span><button onclick="shipmentRegionPage(' + (state.page - 1) + ')"' + (state.page <= 1 ? ' disabled' : '') + '>← Prev</button><span>Page ' + state.page + ' of ' + totalPages + '</span><button onclick="shipmentRegionPage(' + (state.page + 1) + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>Next →</button></div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="shipmentRegionSort(\'shipment_id\')" style="cursor:pointer">Shipment ID' + arrow('shipment_id') + '</th><th onclick="shipmentRegionSort(\'region\')" style="cursor:pointer">Country / Region' + arrow('region') + '</th><th class="num" onclick="shipmentRegionSort(\'process_count\')" style="cursor:pointer">Distinct processes' + arrow('process_count') + '</th><th onclick="shipmentRegionSort(\'process_path\')" style="cursor:pointer">Process path</th><th class="num" onclick="shipmentRegionSort(\'selected_process_tickets\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' tickets' + arrow('selected_process_tickets') + '</th><th class="num" onclick="shipmentRegionSort(\'selected_process_secs\')" style="cursor:pointer">' + escHTML(selectedProcess) + ' time' + arrow('selected_process_secs') + '</th><th class="num" onclick="shipmentRegionSort(\'total_secs\')" style="cursor:pointer">Total flow time' + arrow('total_secs') + '</th></tr></thead><tbody>' + flowRows + '</tbody></table></div></div></div>';
 
   const canvas = document.getElementById('shipmentRegionFlowChart');
   if (canvas && chartRows.length) shipmentRegionFlowChart = new Chart(canvas, {
