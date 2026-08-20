@@ -2593,6 +2593,35 @@ function getShipmentAnalysisRows(filters = {}) {
               '' AS reason, '' AS opened_at, NULL AS opened_ts, '' AS country,
               '' AS category, '' AS sub_category, 0 AS time_worked, '' AS agroup,
               '' AS assigned_to WHERE 0`;
+  // Milestone E6/E8 rows with Shipment ID = NA still represent a related
+  // workload. Give them a stable, clearly labelled pseudo-shipment key from
+  // Consol ID, but only when no usable shipment link exists for that ticket.
+  const milestoneNaParentRowsSql = hasTable(db, 'tasks')
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || p.consol_key AS shipment_id, 'parent:' || p.number AS ticket_key,
+              p.number, p.state, p.reason, p.opened_at, p.opened_ts, p.country,
+              p.category, p.sub_category, p.time_worked, p.agroup, p.assigned_to
+       FROM parent p
+       WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
+         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
+         AND (LOWER(COALESCE(p.category, '')) LIKE '%milestone%e6%'
+              OR LOWER(COALESCE(p.category, '')) LIKE '%milestone%e8%')
+         AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)`
+    : '';
+  const milestoneNaChildRowsSql = hasTable(db, 'tasks') && hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || c.consol_key AS shipment_id, 'child:' || c.number AS ticket_key,
+              c.number, c.state, '' AS reason, c.opened_at, c.opened_ts, '' AS country,
+              c.category, '' AS sub_category, c.time_worked, c.agroup, '' AS assigned_to
+       FROM child c
+       WHERE c.consol_key IS NOT NULL AND c.consol_key != ''
+         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = c.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
+         AND (LOWER(COALESCE(c.category, '')) LIKE '%milestone%e6%'
+              OR LOWER(COALESCE(c.category, '')) LIKE '%milestone%e8%')
+         AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)`
+    : '';
   return queryAll(db,
     `WITH source_rows AS (
        SELECT sl.sid AS shipment_id, 'parent:' || p.number AS ticket_key,
@@ -2602,6 +2631,8 @@ function getShipmentAnalysisRows(filters = {}) {
        WHERE sl.sid IS NOT NULL AND sl.sid != ''
        UNION ALL
        ${childRowsSql}
+       ${milestoneNaParentRowsSql}
+       ${milestoneNaChildRowsSql}
      ), shipment_counts AS (
        SELECT ticket_key, COUNT(DISTINCT shipment_id) AS shipment_count
        FROM source_rows
@@ -2986,11 +3017,23 @@ function getDescriptionMatchedShipmentAnalysis(filters = {}) {
 // matching the population used by the shipment analysis.
 function getShipmentAnalysisOptions() {
   const db = getPrimaryDB();
+  const milestoneNaOptionsSql = hasTable(db, 'tasks')
+    ? `UNION
+       SELECT DISTINCT p.category, p.sub_category, p.agroup, p.state
+       FROM parent p
+       WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
+         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
+         AND (LOWER(COALESCE(p.category, '')) LIKE '%milestone%e6%'
+              OR LOWER(COALESCE(p.category, '')) LIKE '%milestone%e8%')
+         AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)`
+    : '';
   return queryAll(db,
     `SELECT DISTINCT p.category, p.sub_category, p.agroup, p.state
      FROM parent p JOIN ship_link sl ON sl.number = p.number
      WHERE sl.sid IS NOT NULL AND sl.sid != ''
-     ORDER BY p.category, p.sub_category, p.agroup`).map(r => ({
+     ${milestoneNaOptionsSql}
+     ORDER BY category, sub_category, agroup`).map(r => ({
       category: r.category || '',
       sub_category: r.sub_category || '',
       agroup: r.agroup || '',
@@ -5973,6 +6016,19 @@ const QUICK_BOOKING_TEAMS = [
   { label: 'Team B · 16 FTE', fte: 16, regions: ['SH'] },
   { label: 'Team C · 15 FTE', fte: 15, regions: ['TH', 'NB', 'AU', 'PL', 'DE', 'UK', 'NL', 'SE', 'EMEA'] },
 ];
+const MILESTONE_ASSIGNMENT_FLOWS = [
+  { key: 'export_air', label: 'Export Air' },
+  { key: 'import_air', label: 'Import Air' },
+  { key: 'import_sea', label: 'Import Sea' },
+  { key: 'export_sea', label: 'Export Sea' },
+];
+
+function milestoneAssignmentFlow(assignmentGroup) {
+  const value = norm(assignmentGroup || '').toLowerCase().replace(/[_-]+/g, ' ');
+  const direction = /\bexport\b/.test(value) ? 'export' : /\bimport\b/.test(value) ? 'import' : '';
+  const mode = /\bair\b/.test(value) ? 'air' : /\bsea\b/.test(value) ? 'sea' : '';
+  return direction && mode ? direction + '_' + mode : '';
+}
 
 function parseQuickBookingTimeFilter(value) {
   const text = String(value == null ? '' : value).trim().toLowerCase();
@@ -6086,11 +6142,11 @@ function shipmentThresholdSummary(value) {
   const minutes = Number(value);
   if (!Number.isFinite(minutes) || minutes < 0) return 'Enter a time in minutes.';
   const total = shipmentDistributionTimesMinutes.length;
-  if (!total) return 'No shipments in the current chart scope.';
+  if (!total) return 'No jobs in the current chart scope.';
   const count = shipmentDistributionTimesMinutes.filter(timeMinutes => timeMinutes > minutes).length;
   const share = +(100 * count / total).toFixed(1);
   return 'More than ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' min: ' +
-    count.toLocaleString() + ' of ' + total.toLocaleString() + ' shipments (' + share + '%).';
+    count.toLocaleString() + ' of ' + total.toLocaleString() + ' jobs (' + share + '%).';
 }
 
 function quickBookingDistributionThreshold(value) {
@@ -6114,7 +6170,7 @@ function updateShipmentThresholdMatrix() {
   const minutes = Number(raw);
   const entries = shipmentDistributionByRegion.filter(entry => entry.times.length);
   if (!entries.length) {
-    root.innerHTML = '<div class="note">No shipments in the current table-filter scope.</div>';
+    root.innerHTML = '<div class="note">No jobs in the current table-filter scope.</div>';
     return;
   }
   const rankedEntries = entries.map(entry => {
@@ -6126,11 +6182,11 @@ function updateShipmentThresholdMatrix() {
     const shade = Math.min(.72, .08 + share / 100 * .64);
     return '<td style="background:rgba(220,53,69,' + shade.toFixed(3) + ')" title="' +
       attr(entry.region) + ': ' + count.toLocaleString() + ' of ' + entry.times.length.toLocaleString() +
-      ' shipments (' + share + '%) took more than ' + minutes + ' minutes">' +
+      ' jobs (' + share + '%) took more than ' + minutes + ' minutes">' +
       '<span class="count">' + count.toLocaleString() + '</span><span class="share">' + share + '%</span></td>';
   }).join('');
   root.innerHTML = '<h4>More than ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' minutes by region</h4>' +
-    '<div class="note">Each cell shows shipments above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
+    '<div class="note">Each cell shows jobs above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
       rankedEntries.map(entry => '<th>' + escHTML(entry.region) + '</th>').join('') +
       '</tr></thead><tbody><tr><td>&gt; ' + minutes.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' min</td>' +
@@ -6202,7 +6258,7 @@ function renderShipmentTimeDistribution(items, time) {
     data: {
       labels,
       datasets: [
-        { type: 'bar', label: 'Shipment share', data: shares, shipmentCounts: counts, backgroundColor: 'rgba(59,113,202,.72)', borderColor: '#3b71ca', borderWidth: 1, borderRadius: 3, yAxisID: 'y' },
+        { type: 'bar', label: 'Job share', data: shares, shipmentCounts: counts, backgroundColor: 'rgba(59,113,202,.72)', borderColor: '#3b71ca', borderWidth: 1, borderRadius: 3, yAxisID: 'y' },
         { type: 'line', label: 'Cumulative share', data: cumulative, borderColor: '#dc3545', backgroundColor: '#dc3545', tension: .2, pointRadius: 2.5, pointHoverRadius: 4, yAxisID: 'y1' },
       ],
     },
@@ -6215,11 +6271,11 @@ function renderShipmentTimeDistribution(items, time) {
         tooltip: { callbacks: { label: context => context.dataset.yAxisID === 'y1'
           ? context.dataset.label + ': ' + context.raw + '%'
           : context.dataset.label + ': ' + context.raw + '% (' +
-            context.dataset.shipmentCounts[context.dataIndex].toLocaleString() + ' shipments)' } },
+            context.dataset.shipmentCounts[context.dataIndex].toLocaleString() + ' jobs)' } },
       },
       scales: {
-        x: { title: { display: true, text: 'Total time worked per shipment (' + suffix + ')' }, ticks: { maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 10 }, grid: { display: false } },
-        y: { beginAtZero: true, title: { display: true, text: 'Shipment share' }, ticks: { callback: value => value + '%' }, grid: { color: 'rgba(33,37,41,.08)' } },
+        x: { title: { display: true, text: 'Total time worked per job (' + suffix + ')' }, ticks: { maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 10 }, grid: { display: false } },
+        y: { beginAtZero: true, title: { display: true, text: 'Job share' }, ticks: { callback: value => value + '%' }, grid: { color: 'rgba(33,37,41,.08)' } },
         y1: { position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'Cumulative share' }, ticks: { callback: value => value + '%' }, grid: { drawOnChartArea: false } },
       },
     },
@@ -6516,11 +6572,14 @@ function renderQuickBookingSection() {
       '<span class="qb-region-spread-median" style="left:' + middle.toFixed(2) + '%"></span></div>' +
       '<div class="qb-region-spread-values"><span>P25 ' + time(p25) + '</span><span>Median ' + time(median) + '</span><span>P75 ' + time(p75) + '</span></div></div>';
   };
-  if (state.selectedRegion && !regionTotals.has(state.selectedRegion)) state.selectedRegion = '';
+  if (state.selectedRegion && !overallEfficiencyTotals.has(state.selectedRegion)) state.selectedRegion = '';
+  // Keep the distribution on the same job-level population as the overall
+  // region and team views: Shipment IDs plus grouped no-ID Quick Booking IDs.
+  const distributionWorkItems = [...visibleItems, ...visibleNoShipmentEfficiencyItems];
   const distributionItems = state.selectedRegion
-    ? visibleItems.filter(item => item.region === state.selectedRegion) : visibleItems;
+    ? distributionWorkItems.filter(item => item.region === state.selectedRegion) : distributionWorkItems;
   shipmentDistributionTimesMinutes = distributionItems.map(item => Math.max(0, item.total_secs / 60));
-  shipmentDistributionByRegion = [...regionTotals.values()].map(region => ({
+  shipmentDistributionByRegion = [...overallEfficiencyTotals.values()].map(region => ({
     region: region.region,
     times: region.values.map(seconds => Math.max(0, seconds / 60)),
   })).sort((a, b) => a.region.localeCompare(b.region));
@@ -6563,10 +6622,10 @@ function renderQuickBookingSection() {
         (noShipment.ids ? ' · includes ' + noShipment.ids.toLocaleString() + ' no-ID QB IDs' : '') + '</div></button>';
   }).join('');
   const distributionSection = '<div class="chart-grid qb-distribution-card"><div class="chart-card full">' +
-    '<h3>Shipment time distribution · ' + escHTML(distributionScope) + '</h3>' +
-    '<div class="note">Bars show each total-time band&apos;s share of shipments (also printed below the band); hover to see the shipment count. The line shows the cumulative share of shipments completed within that band. ' +
+    '<h3>Job time distribution · ' + escHTML(distributionScope) + '</h3>' +
+    '<div class="note">Bars show each total-time band&apos;s share of jobs (also printed below the band); hover to see the job count. Each job is a Shipment ID or, when no Shipment ID exists, a grouped Quick Booking ID. The line shows the cumulative share of jobs completed within that band. ' +
     (state.selectedRegion ? 'Click the selected region card again to return to all regions.' : 'Click a region card to filter this chart.') +
-    ' · ' + distributionItems.length.toLocaleString() + ' shipments · median ' + distributionMedian + '.</div>' +
+    ' · ' + distributionItems.length.toLocaleString() + ' jobs · median ' + distributionMedian + '.</div>' +
     '<div class="qb-controls" style="margin:0 0 10px"><label class="qb-distribution-control">Bucket size (' +
       (state.timeUnit === 'minutes' ? 'minutes' : 'hours') + ') <input type="number" min="0.1" step="0.1" inputmode="decimal" ' +
       'value="' + attr(state.distributionBucketSize) + '" placeholder="Auto" aria-label="Chart bucket size" ' +
@@ -6709,6 +6768,16 @@ function renderQuickBookingSection() {
   const overallRegionEfficiency = [...overallEfficiencyTotals.values()].filter(region => region.shipments)
     .map(region => ({ ...region, metric_secs: selectedMetricSeconds(region) }))
     .sort((a, b) => a.metric_secs - b.metric_secs || b.shipments - a.shipments || a.region.localeCompare(b.region));
+  const overallEfficiencyAggregate = overallRegionEfficiency.reduce((total, region) => ({
+    shipments: total.shipments + region.shipments,
+    shipment_ids: total.shipment_ids + region.shipment_ids,
+    no_shipment_ids: total.no_shipment_ids + region.no_shipment_ids,
+    no_shipment_tickets: total.no_shipment_tickets + region.no_shipment_tickets,
+    no_shipment_secs: total.no_shipment_secs + region.no_shipment_secs,
+    tickets: total.tickets + region.tickets,
+    total_secs: total.total_secs + region.total_secs,
+    values: total.values.concat(region.values),
+  }), { shipments: 0, shipment_ids: 0, no_shipment_ids: 0, no_shipment_tickets: 0, no_shipment_secs: 0, tickets: 0, total_secs: 0, values: [] });
   overallEfficiencyHoverData = new Map(overallRegionEfficiency.map(region => {
     const above = categoryRegionRows.map(row => {
       const cell = row.byRegion.get(region.region);
@@ -6729,17 +6798,111 @@ function renderQuickBookingSection() {
       no_shipment_time: time(region.no_shipment_secs),
     }];
   }));
+  const isMilestoneE6E8Scope = /\bmilestone\b.*\be(?:6|8)\b/i.test(analysis.category || '');
+  const milestoneTicketStatistic = values => {
+    if (!values.length) return 0;
+    if (quickBookingState.timeMetric === 'median') return medianSecs(values);
+    if (quickBookingState.timeMetric === 'max') return Math.max(...values);
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  };
+  const milestoneTicketStatisticLabel = quickBookingState.timeMetric === 'median' ? 'Median'
+    : quickBookingState.timeMetric === 'max' ? 'Max' : 'Average';
+  const milestoneTicketFlowsByRegion = new Map();
+  if (isMilestoneE6E8Scope) {
+    for (const item of visibleItems) {
+      const flow = milestoneAssignmentFlow(item.assignment_group);
+      if (!flow) continue;
+      for (const regionKey of [item.region, '__overall__']) {
+        if (!milestoneTicketFlowsByRegion.has(regionKey)) milestoneTicketFlowsByRegion.set(regionKey, new Map());
+        const byFlow = milestoneTicketFlowsByRegion.get(regionKey);
+        const values = byFlow.get(flow) || [];
+        values.push(item.ticket_count);
+        byFlow.set(flow, values);
+      }
+    }
+  }
+  const milestoneTicketFlowCell = region => {
+    const byFlow = milestoneTicketFlowsByRegion.get(region) || new Map();
+    const lines = MILESTONE_ASSIGNMENT_FLOWS.map(flow => {
+      const values = byFlow.get(flow.key) || [];
+      if (!values.length) return '';
+      return '<div><b>' + flow.label + '</b> · ' + milestoneTicketStatistic(values).toFixed(1) +
+        ' tickets/shipment · ' + values.length.toLocaleString() + ' shipments</div>';
+    }).filter(Boolean);
+    return lines.length ? '<div style="display:grid;gap:2px;min-width:210px;text-align:left;font-size:0.68rem;line-height:1.35">' +
+      lines.join('') + '</div>' : '—';
+  };
+  const milestoneLastTicketMetricsByRegion = new Map();
+  if (isMilestoneE6E8Scope) {
+    for (const item of visibleItems) {
+      for (const regionKey of [item.region, '__overall__']) {
+        const total = milestoneLastTicketMetricsByRegion.get(regionKey) || {
+          shipments: 0, multi_ticket_shipments: 0, last_ticket_longest: 0,
+          last_longest_secs: 0, earlier_ticket_mean_secs: 0,
+        };
+        total.shipments++;
+        if (item.tickets.length > 1) {
+          total.multi_ticket_shipments++;
+          // Tickets are ordered by opened time (then ticket number) when the
+          // shipment is constructed. Tied maximum work times count as longest.
+          const latest = item.tickets[item.tickets.length - 1];
+          const longest = Math.max(...item.tickets.map(ticket => Number(ticket.time_worked) || 0));
+          if ((Number(latest.time_worked) || 0) >= longest - 1e-9) {
+            total.last_ticket_longest++;
+            total.last_longest_secs += Number(latest.time_worked) || 0;
+            const earlierTickets = item.tickets.slice(0, -1);
+            total.earlier_ticket_mean_secs += earlierTickets.reduce((sum, ticket) =>
+              sum + (Number(ticket.time_worked) || 0), 0) / earlierTickets.length;
+          }
+        }
+        milestoneLastTicketMetricsByRegion.set(regionKey, total);
+      }
+    }
+  }
+  const milestoneLastTicketMetricCell = region => {
+    const metric = milestoneLastTicketMetricsByRegion.get(region);
+    if (!metric || !metric.shipments) return '—';
+    const lastShare = metric.multi_ticket_shipments
+      ? (100 * metric.last_ticket_longest / metric.multi_ticket_shipments).toFixed(1) + '%' : '—';
+    const multiShare = (100 * metric.multi_ticket_shipments / metric.shipments).toFixed(1) + '%';
+    const avgLastLongestSecs = metric.last_ticket_longest
+      ? metric.last_longest_secs / metric.last_ticket_longest : 0;
+    const avgEarlierSecs = metric.last_ticket_longest
+      ? metric.earlier_ticket_mean_secs / metric.last_ticket_longest : 0;
+    const lastUpliftPct = avgEarlierSecs > 0
+      ? 100 * (avgLastLongestSecs - avgEarlierSecs) / avgEarlierSecs : null;
+    return '<div style="display:grid;gap:2px;min-width:200px;text-align:left;font-size:0.68rem;line-height:1.35">' +
+      '<div><b>Last = longest:</b> ' + lastShare + ' <span class="gsm-pct">(' +
+        metric.last_ticket_longest.toLocaleString() + ' / ' + metric.multi_ticket_shipments.toLocaleString() + ' multi-ticket)</span></div>' +
+      '<div><b>Avg last-ticket time:</b> ' + time(avgLastLongestSecs) + ' <span class="gsm-pct">(' +
+        (lastUpliftPct == null ? 'earlier-ticket comparison unavailable' :
+          (lastUpliftPct >= 0 ? '+' : '') + lastUpliftPct.toFixed(1) + '% vs earlier tickets') + ')</span></div>' +
+      '<div><b>Multi-ticket shipments:</b> ' + multiShare + ' <span class="gsm-pct">(' +
+        metric.multi_ticket_shipments.toLocaleString() + ' / ' + metric.shipments.toLocaleString() + ')</span></div></div>';
+  };
   const overallEfficiencySection = '<div class="chart-grid qb-efficiency-ranking"><div class="chart-card full">' +
     '<h3>Overall processing-time efficiency · Country / Region</h3>' +
-    '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the shipment-linked heatmap. Volume is shown to help assess the result.</div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th><th class="num">Total time</th></tr></thead><tbody>' +
+    '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. ' +
+      (isMilestoneE6E8Scope ? 'The additional assignment-group split uses each shipment&apos;s displayed assignment group and shows the ' + milestoneTicketStatisticLabel.toLowerCase() + ' number of tickets per Shipment ID plus the shipment count. The last-ticket metric uses the latest opened ticket; tied longest work times count as longest. Its percentage difference compares the average qualifying last-ticket time with the average earlier-ticket time in those same shipments. ' : '') +
+      'Hover a row to inspect its above-baseline categories; click it to focus that Country / Region column in the shipment-linked heatmap. Volume is shown to help assess the result.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th class="num">Rank</th><th>Country / Region</th><th class="num">' + escHTML(metricLabel) + ' time</th><th class="num">Shipment / QB IDs</th>' +
+      (isMilestoneE6E8Scope ? '<th>Tickets per Shipment ID<br><span class="gsm-pct">' + milestoneTicketStatisticLabel + ' · shipment count</span></th>' : '') +
+      (isMilestoneE6E8Scope ? '<th>Last-ticket timing<br><span class="gsm-pct">multi-ticket shipments only</span></th>' : '') +
+      '<th class="num">Total time</th></tr></thead><tbody>' +
     (overallRegionEfficiency.map((region, index) => '<tr tabindex="0" role="button" class="qb-efficiency-row' + (index === 0 ? ' efficiency-best' : '') + '" onmouseenter="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onfocus="showOverallEfficiencyHover(' + attr(JSON.stringify(region.region)) + ')" onclick="focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();focusOverallEfficiencyRegion(' + attr(JSON.stringify(region.region)) + ')}" aria-label="Show details and focus ' + attr(region.region) + ' in the heatmap"><td class="num efficiency-rank">#' + (index + 1) +
       '</td><td><b>' + escHTML(region.region) + '</b></td><td class="num"><b>' + regionMetric(region.values, region.total_secs, region.shipments) +
       '</b></td><td class="num">' + region.shipment_ids.toLocaleString() + ' shipment IDs' +
       (region.no_shipment_ids ? '<br><span class="gsm-pct">+ ' + region.no_shipment_ids.toLocaleString() + ' no-ID QB IDs</span>' : '') +
-      '</td><td class="num">' + time(region.total_secs) + '</td></tr>').join('') ||
-      '<tr><td colspan="5" style="color:var(--text3)">No countries or regions match the current filters.</td></tr>') +
-    '</tbody></table></div><div class="qb-efficiency-hover-card" id="overallEfficiencyHoverCard" aria-live="polite">Hover a Country / Region row to see categories above their baseline.</div></div></div>';
+      '</td>' + (isMilestoneE6E8Scope ? '<td>' + milestoneTicketFlowCell(region.region) + '</td>' : '') +
+      (isMilestoneE6E8Scope ? '<td>' + milestoneLastTicketMetricCell(region.region) + '</td>' : '') +
+      '<td class="num">' + time(region.total_secs) + '</td></tr>').join('') ||
+      '<tr><td colspan="' + (isMilestoneE6E8Scope ? 7 : 5) + '" style="color:var(--text3)">No countries or regions match the current filters.</td></tr>') +
+    '</tbody><tfoot><tr><td class="num">—</td><td><b>Total</b></td><td class="num"><b>' +
+      regionMetric(overallEfficiencyAggregate.values, overallEfficiencyAggregate.total_secs, overallEfficiencyAggregate.shipments) +
+      '</b></td><td class="num">' + overallEfficiencyAggregate.shipment_ids.toLocaleString() + ' shipment IDs' +
+      (overallEfficiencyAggregate.no_shipment_ids ? '<br><span class="gsm-pct">+ ' + overallEfficiencyAggregate.no_shipment_ids.toLocaleString() + ' no-ID QB IDs</span>' : '') +
+      '</td>' + (isMilestoneE6E8Scope ? '<td>' + milestoneTicketFlowCell('__overall__') + '</td><td>' + milestoneLastTicketMetricCell('__overall__') + '</td>' : '') +
+      '<td class="num"><b>' + time(overallEfficiencyAggregate.total_secs) + '</b></td></tr></tfoot></table></div><div class="qb-efficiency-hover-card" id="overallEfficiencyHoverCard" aria-live="polite">Hover a Country / Region row to see categories above their baseline.</div></div></div>';
   const isQuickBookingScope = norm(analysis.category).toLowerCase() === 'quick booking';
   const teamAllocation = isQuickBookingScope ? QUICK_BOOKING_TEAMS.map(team => {
     const cells = team.regions.map(region => overallEfficiencyTotals.get(region)).filter(Boolean);
