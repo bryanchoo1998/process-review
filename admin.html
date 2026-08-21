@@ -2259,7 +2259,7 @@ function analysisCellType(s, t, resp){
 function analysisDiagnose(step){
   const cells = ANALYSIS.regions.map(r => (step.cells[r]||{t:'none'}).t).filter(t => t !== 'none');
   if(!cells.length) return 'no_data';
-  const devs = cells.filter(t => t !== 'aligned');
+  const devs = cells.filter(t => t !== 'aligned' && t !== 'stale');
   if(!devs.length) return 'conformant';
   if(devs.length === cells.length) return new Set(devs).size === 1 ? 'sop_problem' : 'fragmented';
   return devs.length === 1 ? 'regional_outlier' : 'fragmented';
@@ -2276,13 +2276,15 @@ function renderAnalysisBody(){
   }
 
   // headline conformance
-  let total=0, aligned=0;
+  let total=0, conforming=0;
   const typeCount = {};
   steps.forEach(s=>REG.forEach(r=>{
     const c=s.cells[r]; if(!c || c.t==='none') return;
-    total++; if(c.t==='aligned') aligned++; else typeCount[c.t]=(typeCount[c.t]||0)+1;
+    total++;
+    if(c.t==='aligned' || c.t==='stale') conforming++;
+    if(c.t!=='aligned') typeCount[c.t]=(typeCount[c.t]||0)+1;
   }));
-  const pct = total? Math.round(aligned/total*100):0;
+  const pct = total? Math.round(conforming/total*100):0;
   const devOrder = ['stale','coverage','sequence','emergent'];
   const maxDev = Math.max(1,...devOrder.map(k=>typeCount[k]||0));
   const bars = devOrder.map(k=>`
@@ -2351,12 +2353,12 @@ function renderAnalysisBody(){
   host.innerHTML = `
     <div class="an">
     <h2 class="page">${esc(proc.name)}</h2>
-    <p class="lede">${esc(proc.domain||'')}${proc.domain?' · ':''}${REG.length} region${REG.length===1?'':'s'} surveyed · ${steps.length} steps. Every answer that isn't “matches global” is a deviation; what matters is the pattern across each row.</p>
+    <p class="lede">${esc(proc.domain||'')}${proc.domain?' · ':''}${REG.length} region${REG.length===1?'':'s'} surveyed · ${steps.length} steps. Answers that follow the global SOP conform, including cases where the local document is stale. What matters is the pattern across each row.</p>
 
     <div class="head">
       <div class="score">
         <div class="n" style="color:${pct>=75?'var(--aligned)':pct>=50?'var(--source)':'var(--coverage)'}">${pct}%</div>
-        <div class="l">Conformance<br>${aligned} of ${total} answers</div>
+        <div class="l">Conformance<br>${conforming} of ${total} answers</div>
       </div>
       <div class="bars">${bars}</div>
     </div>
