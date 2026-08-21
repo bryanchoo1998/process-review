@@ -6363,12 +6363,41 @@ function updateMilestoneTicketThresholdMatrix() {
       ' shipment IDs (' + entry.share + '%) have more than ' + threshold + ' tickets">' +
       '<span class="count">' + entry.count.toLocaleString() + '</span><span class="share">' + entry.share + '%</span></td>';
   }).join('');
+  const selectedStatistic = values => {
+    if (!values.length) return null;
+    if (quickBookingState.timeMetric === 'median') return medianSecs(values);
+    if (quickBookingState.timeMetric === 'max') return Math.max(...values);
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  };
+  const metricLabel = quickBookingState.timeMetric === 'median' ? 'Median'
+    : quickBookingState.timeMetric === 'max' ? 'Max' : 'Average';
+  const formatTime = seconds => quickBookingState.timeUnit === 'minutes'
+    ? (seconds / 60).toFixed(1) + 'm' : (seconds / 3600).toFixed(2) + 'h';
+  const timingRows = entries.map(entry => {
+    const lower = entry.shipment_values.filter(item => item.ticket_count <= threshold)
+      .map(item => item.total_secs);
+    const higher = entry.shipment_values.filter(item => item.ticket_count > threshold)
+      .map(item => item.total_secs);
+    const timingCell = values => values.length
+      ? '<b>' + formatTime(selectedStatistic(values)) + '</b><br><span class="gsm-pct">' +
+        values.length.toLocaleString() + ' shipment IDs</span>'
+      : '<span class="gsm-pct">—</span>';
+    return '<tr><td><b>' + escHTML(entry.region) + '</b></td><td class="num">' + timingCell(lower) +
+      '</td><td class="num">' + timingCell(higher) + '</td></tr>';
+  }).join('');
   root.innerHTML = '<h4>More than ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets by region</h4>' +
     '<div class="note">Each cell shows shipment IDs above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
       entries.map(entry => '<th>' + escHTML(entry.region) + '</th>').join('') +
       '</tr></thead><tbody><tr><td>&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets</td>' +
-      cells + '</tr></tbody></table></div>';
+      cells + '</tr></tbody></table></div>' +
+    '<h4 style="margin-top:14px">Shipment processing time by region</h4>' +
+    '<div class="note">Selected ' + metricLabel.toLowerCase() + ' total time per shipment ID, split by the same ticket-count threshold.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country / Region</th><th class="num">≤ ' +
+      threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets<br><span class="gsm-pct">' + metricLabel +
+      ' time / shipment</span></th><th class="num">&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) +
+      ' tickets<br><span class="gsm-pct">' + metricLabel + ' time / shipment</span></th></tr></thead><tbody>' +
+      timingRows + '</tbody></table></div>';
 }
 
 function updateMilestoneTicketThresholdVisual() {
@@ -6978,10 +7007,16 @@ function renderQuickBookingSection() {
   for (const item of milestoneTicketDistributionItems) {
     const region = item.region || 'Other';
     if (!milestoneTicketRegionBuckets.has(region)) milestoneTicketRegionBuckets.set(region, []);
-    milestoneTicketRegionBuckets.get(region).push(Math.max(1, Number(item.ticket_count) || 1));
+    milestoneTicketRegionBuckets.get(region).push({
+      ticket_count: Math.max(1, Number(item.ticket_count) || 1),
+      total_secs: Math.max(0, Number(item.total_secs) || 0),
+    });
   }
   milestoneTicketCountsByRegion = [...milestoneTicketRegionBuckets.entries()]
-    .map(([region, ticket_counts]) => ({ region, ticket_counts }))
+    .map(([region, shipment_values]) => ({
+      region, shipment_values,
+      ticket_counts: shipment_values.map(item => item.ticket_count),
+    }))
     .sort((a, b) => a.region.localeCompare(b.region));
   const milestoneFlowTimesByRegion = new Map();
   if (isMilestoneE6E8Scope) {
