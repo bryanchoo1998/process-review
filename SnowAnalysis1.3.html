@@ -6377,20 +6377,21 @@ function updateMilestoneTicketThresholdMatrix() {
     ? '<b>' + formatTime(selectedStatistic(values)) + '</b><br><span class="gsm-pct">' +
       values.length.toLocaleString() + ' shipment IDs</span>'
     : '<span class="gsm-pct">—</span>';
-  const timingRows = entries.map(entry => {
-    const lower = entry.shipment_values.filter(item => item.ticket_count <= threshold)
-      .map(item => item.total_secs);
-    const higher = entry.shipment_values.filter(item => item.ticket_count > threshold)
-      .map(item => item.total_secs);
-    return '<tr><td><b>' + escHTML(entry.region) + '</b></td><td class="num">' + timingCell(lower) +
-      '</td><td class="num">' + timingCell(higher) + '</td></tr>';
+  const flowTimingCells = shipmentValues => MILESTONE_ASSIGNMENT_FLOWS.map(flow => {
+    const flowItems = shipmentValues.filter(item => item.flow === flow.key);
+    const lower = flowItems.filter(item => item.ticket_count <= threshold).map(item => item.total_secs);
+    const higher = flowItems.filter(item => item.ticket_count > threshold).map(item => item.total_secs);
+    return '<td class="num">' + timingCell(lower) + '</td><td class="num">' + timingCell(higher) + '</td>';
   }).join('');
-  const totalLower = entries.flatMap(entry => entry.shipment_values
-    .filter(item => item.ticket_count <= threshold).map(item => item.total_secs));
-  const totalHigher = entries.flatMap(entry => entry.shipment_values
-    .filter(item => item.ticket_count > threshold).map(item => item.total_secs));
-  const timingTotalRow = '<tr><td><b>Total</b></td><td class="num">' + timingCell(totalLower) +
-    '</td><td class="num">' + timingCell(totalHigher) + '</td></tr>';
+  const timingRows = entries.map(entry => '<tr><td><b>' + escHTML(entry.region) + '</b></td>' +
+    flowTimingCells(entry.shipment_values) + '</tr>').join('');
+  const allFlowItems = entries.flatMap(entry => entry.shipment_values.filter(item => item.flow));
+  const timingTotalRow = '<tr><td><b>Total</b></td>' + flowTimingCells(allFlowItems) + '</tr>';
+  const timingHeaderGroups = MILESTONE_ASSIGNMENT_FLOWS.map(flow => '<th colspan="2" class="num">' +
+    escHTML(flow.label) + '<br><span class="gsm-pct">' + metricLabel + ' time / shipment</span></th>').join('');
+  const timingHeaderThresholds = MILESTONE_ASSIGNMENT_FLOWS.map(() => '<th class="num">≤ ' +
+    threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets</th><th class="num">&gt; ' +
+    threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets</th>').join('');
   root.innerHTML = '<h4>More than ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets by region</h4>' +
     '<div class="note">Each cell shows shipment IDs above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
@@ -6398,11 +6399,9 @@ function updateMilestoneTicketThresholdMatrix() {
       '</tr></thead><tbody><tr><td>&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets</td>' +
       cells + '</tr></tbody></table></div>' +
     '<h4 style="margin-top:14px">Shipment processing time by region</h4>' +
-    '<div class="note">Selected ' + metricLabel.toLowerCase() + ' total time per shipment ID, split by the same ticket-count threshold.</div>' +
-    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country / Region</th><th class="num">≤ ' +
-      threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets<br><span class="gsm-pct">' + metricLabel +
-      ' time / shipment</span></th><th class="num">&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) +
-      ' tickets<br><span class="gsm-pct">' + metricLabel + ' time / shipment</span></th></tr></thead><tbody>' +
+    '<div class="note">Selected ' + metricLabel.toLowerCase() + ' total time per shipment ID, split by ticket-count threshold and assignment-group flow. Shipment IDs without one of the four recognised flows are excluded from this table.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th rowspan="2">Country / Region</th>' +
+      timingHeaderGroups + '</tr><tr>' + timingHeaderThresholds + '</tr></thead><tbody>' +
       timingRows + '</tbody><tfoot>' + timingTotalRow + '</tfoot></table></div>';
 }
 
@@ -7016,6 +7015,7 @@ function renderQuickBookingSection() {
     milestoneTicketRegionBuckets.get(region).push({
       ticket_count: Math.max(1, Number(item.ticket_count) || 1),
       total_secs: Math.max(0, Number(item.total_secs) || 0),
+      flow: milestoneAssignmentFlow(item.assignment_group),
     });
   }
   milestoneTicketCountsByRegion = [...milestoneTicketRegionBuckets.entries()]
