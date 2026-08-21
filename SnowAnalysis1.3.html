@@ -7829,7 +7829,6 @@ function renderReasonAnalysis() {
     .map(([category, count]) => ({ category, count, share: reasonTickets ? count / reasonTickets : 0 }))
     .sort((a, b) => b.count - a.count);
   const categoryTotals = reasonAnalysisCache.categoryTotals;
-  const totalTickets = [...categoryTotals.values()].reduce((sum, count) => sum + count, 0);
 
   // `time_worked` is stored by the app as seconds. Restricting the comparison
   // to positive values prevents blank imports (normalised to zero) from being
@@ -7863,8 +7862,8 @@ function renderReasonAnalysis() {
   const expandedDetail = category => {
     const rows = reasonRows.filter(row => row.category === category);
     if (!rows.length) return '<div class="note">No tickets with a reason in this category.</div>';
-    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets</th><th class="num">Tickets with logged time</th><th class="num">' + selectedLabel + ' time worked</th></tr></thead><tbody>' +
-      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / totalTickets).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(stat(timing)) : '—') + '</td></tr>'; }).join('') +
+    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Tickets with logged time</th><th class="num">' + selectedLabel + ' time worked</th></tr></thead><tbody>' +
+      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(stat(timing)) : '—') + '</td></tr>'; }).join('') +
       '</tbody></table></div>';
   };
   const topCategories = categoryRows.slice(0, 15);
