@@ -7728,6 +7728,178 @@ function renderShipmentRegionSection() {
   });
 }
 
+// ── Reason analysis and time ───────────────────────────────────────────────
+// This view stays lazy because median calculation needs the individual logged
+// time values. It is scoped to the active Team filter, just like the other
+// dashboard pages.
+const reasonAnalysisState = { metric: 'average', timeSearch: '', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
+let reasonAnalysisCharts = [];
+let reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
+
+function reasonAnalysisFilterClause(alias = 'p') {
+  const groups = (currentGroups || []).filter(Boolean);
+  return groups.length
+    ? { sql: ` AND ${alias}.agroup IN (${groups.map(() => '?').join(',')})`, args: groups }
+    : { sql: '', args: [] };
+}
+
+function reasonMedian(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function reasonMinutes(value) {
+  return value == null || !isFinite(value) ? '—' : (+value).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' min';
+}
+
+function reasonAnalysisSearch(kind, value) {
+  reasonAnalysisState[kind] = value || '';
+  renderReasonAnalysis();
+}
+
+function reasonAnalysisMetric(value) {
+  reasonAnalysisState.metric = value === 'median' ? 'median' : 'average';
+  renderReasonAnalysis();
+}
+
+function reasonAnalysisSort(key) {
+  if (reasonAnalysisState.sortKey === key) reasonAnalysisState.sortDir = reasonAnalysisState.sortDir === 'asc' ? 'desc' : 'asc';
+  else { reasonAnalysisState.sortKey = key; reasonAnalysisState.sortDir = key === 'category' ? 'asc' : 'desc'; }
+  renderReasonAnalysis();
+}
+
+function reasonAnalysisToggle(category) {
+  const expanded = reasonAnalysisState.expandedCategories;
+  expanded.has(category) ? expanded.delete(category) : expanded.add(category);
+  renderReasonAnalysis();
+}
+
+function renderReasonAnalysis() {
+  const root = document.getElementById('reasonAnalysisSection');
+  if (!root) return;
+  const db = getPrimaryDB();
+  const filter = reasonAnalysisFilterClause('p');
+  const categoryExpr = `COALESCE(NULLIF(TRIM(p.category), ''), '(blank)')`;
+  const cacheKey = (currentGroups || []).filter(Boolean).slice().sort().join('\x1f');
+  if (reasonAnalysisCache.key !== cacheKey) {
+    const cachedReasonRows = queryWithRetry(db,
+      `SELECT ${categoryExpr} category, TRIM(p.reason) reason, COUNT(*) c
+         FROM parent p
+        WHERE TRIM(COALESCE(p.reason, '')) != ''${filter.sql}
+        GROUP BY ${categoryExpr}, TRIM(p.reason)
+        ORDER BY c DESC`, filter.args);
+    const cachedCategoryTotals = new Map(queryWithRetry(db,
+      `SELECT ${categoryExpr} category, COUNT(*) c
+         FROM parent p
+        WHERE 1 = 1${filter.sql}
+        GROUP BY ${categoryExpr}`, filter.args).map(row => [row.category, row.c]));
+    const cachedTimeRows = queryWithRetry(db,
+      `SELECT ${categoryExpr} category,
+              CASE WHEN TRIM(COALESCE(p.reason, '')) != '' THEN 1 ELSE 0 END has_reason,
+              p.time_worked secs
+         FROM parent p
+        WHERE p.time_worked > 0${filter.sql}`, filter.args);
+    const cachedTimeByCategory = new Map();
+    for (const row of cachedTimeRows) {
+      const item = cachedTimeByCategory.get(row.category) || { category: row.category, withReason: [], withoutReason: [] };
+      (row.has_reason ? item.withReason : item.withoutReason).push(row.secs / 60);
+      cachedTimeByCategory.set(row.category, item);
+    }
+    const cachedReasonTimeRows = queryWithRetry(db,
+      `SELECT ${categoryExpr} category, TRIM(p.reason) reason, p.time_worked secs
+         FROM parent p
+        WHERE p.time_worked > 0 AND TRIM(COALESCE(p.reason, '')) != ''${filter.sql}`, filter.args);
+    const cachedReasonTimeGroups = new Map();
+    for (const row of cachedReasonTimeRows) {
+      const key = row.category + '\x1f' + row.reason;
+      const item = cachedReasonTimeGroups.get(key) || [];
+      item.push(row.secs / 60);
+      cachedReasonTimeGroups.set(key, item);
+    }
+    reasonAnalysisCache = { key: cacheKey, reasonRows: cachedReasonRows, categoryTotals: cachedCategoryTotals, timeGroups: [...cachedTimeByCategory.values()], reasonTimeGroups: cachedReasonTimeGroups };
+  }
+  const reasonRows = reasonAnalysisCache.reasonRows;
+
+  const byCategory = new Map();
+  for (const row of reasonRows) byCategory.set(row.category, (byCategory.get(row.category) || 0) + row.c);
+  const reasonTickets = reasonRows.reduce((sum, row) => sum + row.c, 0);
+  const categoryRows = [...byCategory.entries()]
+    .map(([category, count]) => ({ category, count, share: reasonTickets ? count / reasonTickets : 0 }))
+    .sort((a, b) => b.count - a.count);
+  const categoryTotals = reasonAnalysisCache.categoryTotals;
+  const totalTickets = [...categoryTotals.values()].reduce((sum, count) => sum + count, 0);
+
+  // `time_worked` is stored by the app as seconds. Restricting the comparison
+  // to positive values prevents blank imports (normalised to zero) from being
+  // mistaken for an observed handling time.
+  const metric = reasonAnalysisState.metric;
+  const stat = values => metric === 'median'
+    ? reasonMedian(values)
+    : (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0);
+  const timeData = reasonAnalysisCache.timeGroups.map(item => ({
+    category: item.category,
+    withCount: item.withReason.length,
+    withoutCount: item.withoutReason.length,
+    reasonCount: byCategory.get(item.category) || 0,
+    reasonPercent: (byCategory.get(item.category) || 0) / (categoryTotals.get(item.category) || 1),
+    withValue: stat(item.withReason),
+    withoutValue: stat(item.withoutReason),
+    difference: stat(item.withReason) - stat(item.withoutReason),
+  })).sort((a, b) => (b.withCount + b.withoutCount) - (a.withCount + a.withoutCount));
+
+  const timeNeedle = reasonAnalysisState.timeSearch.trim().toLowerCase();
+  const visibleTimeRows = timeData.filter(row => !timeNeedle || row.category.toLowerCase().includes(timeNeedle));
+  const sortKey = reasonAnalysisState.sortKey;
+  const sortDir = reasonAnalysisState.sortDir === 'asc' ? 1 : -1;
+  visibleTimeRows.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    const delta = typeof av === 'number' && typeof bv === 'number'
+      ? av - bv : String(av || '').localeCompare(String(bv || ''), undefined, { numeric: true });
+    return delta * sortDir || a.category.localeCompare(b.category);
+  });
+  const sortArrow = key => reasonAnalysisState.sortKey === key ? (reasonAnalysisState.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const expandedDetail = category => {
+    const rows = reasonRows.filter(row => row.category === category);
+    if (!rows.length) return '<div class="note">No tickets with a reason in this category.</div>';
+    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets</th><th class="num">Tickets with logged time</th><th class="num">' + selectedLabel + ' time worked</th></tr></thead><tbody>' +
+      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / totalTickets).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(stat(timing)) : '—') + '</td></tr>'; }).join('') +
+      '</tbody></table></div>';
+  };
+  const topCategories = categoryRows.slice(0, 15);
+  const topTime = [...timeData].filter(row => row.withCount && row.withoutCount)
+    .sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference)).slice(0, 15);
+  const selectedLabel = metric === 'median' ? 'Median' : 'Average';
+
+  reasonAnalysisCharts.forEach(chart => { try { chart.destroy(); } catch (_) {} });
+  reasonAnalysisCharts = [];
+  root.innerHTML =
+    '<div class="chart-grid"><div class="chart-card full"><h3>Reason analysis and time</h3>' +
+      '<div class="note">Reasons show why tickets were held or reworked. Time comparisons use positive logged <b>time_worked</b> values, converted from seconds to minutes, and follow the active team filter.</div>' +
+      '<div class="kpi-row" style="margin-top:12px">' +
+        '<div class="kpi info"><div class="kpi-label">Tickets with a reason</div><div class="kpi-value">' + reasonTickets.toLocaleString() + '</div><div class="kpi-sub">across ' + categoryRows.length.toLocaleString() + ' categories</div></div>' +
+        '<div class="kpi purple"><div class="kpi-label">Reason types</div><div class="kpi-value">' + new Set(reasonRows.map(row => row.reason)).size.toLocaleString() + '</div><div class="kpi-sub">used in the selected tickets</div></div>' +
+        '<div class="kpi"><div class="kpi-label">Most common category</div><div class="kpi-value" style="font-size:1.05rem">' + escHTML(topCategories[0]?.category || '—') + '</div><div class="kpi-sub">' + (topCategories[0]?.count || 0).toLocaleString() + ' tickets with a reason</div></div>' +
+      '</div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card"><h3>Top categories with a reason</h3><div class="chart-wrap tall"><canvas id="reasonCategoryChart"></canvas></div></div>' +
+      '<div class="chart-card"><h3>Largest time difference by category</h3><div class="table-ctl"><label>Statistic <select onchange="reasonAnalysisMetric(this.value)"><option value="average"' + (metric === 'average' ? ' selected' : '') + '>Average</option><option value="median"' + (metric === 'median' ? ' selected' : '') + '>Median</option></select></label></div><div class="chart-wrap tall"><canvas id="reasonTimeChart"></canvas></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>' + selectedLabel + ' time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'withValue\')" style="cursor:pointer">With reason: ' + selectedLabel.toLowerCase() + sortArrow('withValue') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutValue\')" style="cursor:pointer">Without reason: ' + selectedLabel.toLowerCase() + sortArrow('withoutValue') + '</th><th class="num" onclick="reasonAnalysisSort(\'difference\')" style="cursor:pointer">Difference' + sortArrow('difference') + '</th></tr></thead><tbody>' +
+      (visibleTimeRows.length ? visibleTimeRows.map(row => '<tr><td><button type="button" data-category="' + attr(row.category) + '" onclick="reasonAnalysisToggle(this.dataset.category)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (reasonAnalysisState.expandedCategories.has(row.category) ? '▾ ' : '▸ ') + escHTML(row.category) + '</button></td><td class="num">' + row.withCount.toLocaleString() + '</td><td class="num">' + (100 * row.reasonPercent).toFixed(2) + '%</td><td class="num">' + (row.withCount ? reasonMinutes(row.withValue) : '—') + '</td><td class="num">' + row.withoutCount.toLocaleString() + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutValue) : '—') + '</td><td class="num" style="color:' + (row.difference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.difference >= 0 ? '+' : '') + reasonMinutes(row.difference) : '—') + '</td></tr>' + (reasonAnalysisState.expandedCategories.has(row.category) ? '<tr><td colspan="7">' + expandedDetail(row.category) + '</td></tr>' : '')).join('') : '<tr><td colspan="7">No categories match this search.</td></tr>') +
+      '</tbody></table></div></div></div>';
+
+  const catCanvas = document.getElementById('reasonCategoryChart');
+  if (catCanvas && topCategories.length) reasonAnalysisCharts.push(new Chart(catCanvas, {
+    type: 'bar', data: { labels: topCategories.map(row => row.category), datasets: [{ label: 'Tickets with a reason', data: topCategories.map(row => row.count), backgroundColor: 'rgba(59,113,202,.78)', borderRadius: 4 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.parsed.x.toLocaleString() + ' tickets · ' + topCategories[ctx.dataIndex].share.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 1 }) } } }, scales: { x: { beginAtZero: true }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } } },
+  }));
+  const timeCanvas = document.getElementById('reasonTimeChart');
+  if (timeCanvas && topTime.length) reasonAnalysisCharts.push(new Chart(timeCanvas, {
+    type: 'bar', data: { labels: topTime.map(row => row.category), datasets: [{ label: selectedLabel + ' difference (minutes)', data: topTime.map(row => row.difference), backgroundColor: topTime.map(row => row.difference < 0 ? 'rgba(220,53,69,.75)' : 'rgba(13,148,136,.78)'), borderRadius: 4 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => (ctx.parsed.x >= 0 ? '+' : '') + ctx.parsed.x.toFixed(1) + ' minutes' } } }, scales: { x: { title: { display: true, text: selectedLabel + ' minutes: with reason − without reason' } }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } } },
+  }));
+}
+
 function dashTab(page) {
   document.querySelectorAll('#dashContent .dash-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.page === page));
@@ -7748,6 +7920,11 @@ function dashTab(page) {
   if (page === 'shipment-region' && shipmentRegionRoot && shipmentRegionRoot.dataset.lazyShipmentRegion === 'true') {
     shipmentRegionRoot.dataset.lazyShipmentRegion = 'loaded';
     renderShipmentRegionSection();
+  }
+  const reasonRoot = document.getElementById('reasonAnalysisSection');
+  if (page === 'reason-time' && reasonRoot && reasonRoot.dataset.lazyReasonAnalysis === 'true') {
+    reasonRoot.dataset.lazyReasonAnalysis = 'loaded';
+    renderReasonAnalysis();
   }
   // render the quadrant lazily the first time the categories page is opened
   if (page === 'categories' && !quadRendered) {
@@ -9540,6 +9717,7 @@ function renderLargeFileDashboard(data) {
   sectionCharts.length = 0;
   root.innerHTML = '<div class="dash-tabs">' +
     '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
+    '<button class="dash-tab" data-page="reason-time" onclick="dashTab(\'reason-time\')">Reason Analysis and Time</button>' +
     '<button class="dash-tab" data-page="quick-booking" onclick="dashTab(\'quick-booking\')">Shipment Analysis</button>' +
     '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
     '</div>' +
@@ -9553,6 +9731,8 @@ function renderLargeFileDashboard(data) {
         '</div><div class="note">Open Shipment Analysis to review explicit shipment IDs and the separate short-description matching result. The analysis loads only when that tab is selected.</div>' +
       '</div></div>' +
     '</div>' +
+    '<div class="dash-page" data-page="reason-time"><div id="reasonAnalysisSection" data-lazy-reason-analysis="true">' +
+      '<div class="loading">Open Reason Analysis and Time to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="quick-booking"><div id="quickBookingSection" data-lazy-shipment="true">' +
       '<div class="loading">Open this tab to load Shipment Analysis.</div></div></div>' +
     '<div class="dash-page" data-page="shipment-region"><div id="shipmentRegionSection" data-lazy-shipment-region="true">' +
@@ -9876,6 +10056,7 @@ function renderDashboard(data) {
   document.getElementById('dashContent').innerHTML =
     '<div class="dash-tabs">' +
       '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
+      '<button class="dash-tab" data-page="reason-time" onclick="dashTab(\'reason-time\')">Reason Analysis and Time</button>' +
       '<button class="dash-tab" data-page="teams" onclick="dashTab(\'teams\')">Teams &amp; Assignees</button>' +
       '<button class="dash-tab" data-page="categories" onclick="dashTab(\'categories\')">Categories &amp; Baseline</button>' +
       '<button class="dash-tab" data-page="mile" onclick="dashTab(\'mile\')">Milestone Analysis</button>' +
@@ -9883,6 +10064,8 @@ function renderDashboard(data) {
       '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
     '</div>' +
     '<div class="dash-page active" data-page="overview">' + OV + '</div>' +
+    '<div class="dash-page" data-page="reason-time"><div id="reasonAnalysisSection" data-lazy-reason-analysis="true">' +
+      '<div class="loading">Open Reason Analysis and Time to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="teams">' + TM + '</div>' +
     '<div class="dash-page" data-page="categories">' + CT + '</div>' +
     '<div class="dash-page" data-page="mile">' + ML + '</div>' +
