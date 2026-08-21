@@ -42,13 +42,40 @@ async function loadProcessIndex(){
     .eq('archived', false)
     .order('name');
   if(error) throw error;
+  // Match the Analysis screen: only the newest completed session for each
+  // process × region contributes to its library conformance score.
+  const { data: grid, error: gridError } = await sb
+    .from('v_step_region_grid')
+    .select('process_id, session_id, region_code, started_at, session_status, verdict')
+    .eq('session_status', 'complete');
+  if(gridError) console.warn('Could not load library conformance', gridError);
+
+  const latestSession = new Map();
+  (grid || []).forEach(row => {
+    const key = `${row.process_id}|${row.region_code}`;
+    const current = latestSession.get(key);
+    if(!current || new Date(row.started_at) > new Date(current.started_at)) latestSession.set(key, row);
+  });
+  const score = new Map();
+  (grid || []).forEach(row => {
+    const current = latestSession.get(`${row.process_id}|${row.region_code}`);
+    if(!current || current.session_id !== row.session_id || row.verdict === 'none') return;
+    const tally = score.get(row.process_id) || { total:0, conforming:0 };
+    tally.total++;
+    if(row.verdict === 'aligned' || row.verdict === 'stale') tally.conforming++;
+    score.set(row.process_id, tally);
+  });
   return data.map(p => ({
     id: p.id,
     name: p.name,
     domain: p.domain || '',
     steps: p.step?.[0]?.count ?? 0,
     updated: p.updated_at,
-    status: 'ready'
+    status: 'ready',
+    conformance: score.has(p.id) ? {
+      ...score.get(p.id),
+      pct: Math.round(score.get(p.id).conforming / score.get(p.id).total * 100)
+    } : null
   }));
 }
 
