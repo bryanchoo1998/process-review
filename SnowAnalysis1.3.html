@@ -5994,7 +5994,7 @@ const quickBookingState = {
   filters: { region: [], assignment_group: [], shipment_id: '', shipment_link: '', case_type: '', ticket_count: '', total_secs: '', latest_state: '', reason: [], ticket_sequence: '' },
   analysis: { category: 'Quick Booking', sub_category: '', agroup: '', latest_state: '' },
   sort: 'total_secs', dir: 'desc', timeUnit: 'hours', timeMetric: 'average', hotspotSort: 'total', categoryMatrixCategoryDir: 'desc', categoryMatrixSortRegion: '', categoryMatrixSelectedCategory: '', categoryMatrixFocusedRegion: '', categoryMatrixScrollRegion: '',
-  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', controlFocus: null,
+  page: 1, perPage: SHIPMENT_TABLE_DEFAULT_PER_PAGE, selectedRegion: '', distributionBucketSize: '', distributionThresholdMinutes: '', milestoneTicketThreshold: '', controlFocus: null,
 };
 let shipmentAnalysisOptions = null;
 let shipmentAnalysisHotspots = null;
@@ -6002,6 +6002,9 @@ let shipmentDistributionChart = null;
 let shipmentDistributionTimesMinutes = [];
 let shipmentDistributionBands = [];
 let shipmentDistributionByRegion = [];
+let milestoneTicketDistributionChart = null;
+let milestoneTicketDistributionBands = [];
+let milestoneTicketCountsByRegion = [];
 let overallEfficiencyHoverData = new Map();
 let quickBookingTeamAllocationChart = null;
 const shipmentThresholdOverlayPlugin = {
@@ -6311,6 +6314,139 @@ function renderShipmentTimeDistribution(items, time) {
     },
   });
   updateShipmentThresholdVisual();
+}
+
+function milestoneTicketThresholdSummary(value) {
+  if (value == null || String(value).trim() === '') return 'Enter a ticket count.';
+  const threshold = Number(value);
+  if (!Number.isFinite(threshold) || threshold < 0) return 'Enter a ticket count.';
+  const total = milestoneTicketCountsByRegion.reduce((sum, entry) => sum + entry.ticket_counts.length, 0);
+  if (!total) return 'No shipments in the current Milestone E6/E8 scope.';
+  const count = milestoneTicketCountsByRegion.reduce((sum, entry) =>
+    sum + entry.ticket_counts.filter(ticketCount => ticketCount > threshold).length, 0);
+  return 'More than ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets: ' +
+    count.toLocaleString() + ' of ' + total.toLocaleString() + ' shipment IDs (' +
+    (100 * count / total).toFixed(1) + '%).';
+}
+
+function milestoneTicketDistributionThreshold(value) {
+  // Update the dependent visual only, so the numeric field keeps its cursor
+  // while the user is entering a threshold.
+  quickBookingState.milestoneTicketThreshold = value;
+  const result = document.getElementById('milestoneTicketThresholdResult');
+  if (result) result.textContent = milestoneTicketThresholdSummary(value);
+  updateMilestoneTicketThresholdVisual();
+  updateMilestoneTicketThresholdMatrix();
+}
+
+function updateMilestoneTicketThresholdMatrix() {
+  const root = document.getElementById('milestoneTicketThresholdMatrix');
+  if (!root) return;
+  const raw = quickBookingState.milestoneTicketThreshold;
+  if (raw == null || String(raw).trim() === '' || !Number.isFinite(Number(raw)) || Number(raw) < 0) {
+    root.innerHTML = '<div class="note">Enter a ticket count above to compare regions.</div>';
+    return;
+  }
+  const threshold = Number(raw);
+  const entries = milestoneTicketCountsByRegion.filter(entry => entry.ticket_counts.length).map(entry => {
+    const count = entry.ticket_counts.filter(ticketCount => ticketCount > threshold).length;
+    return { ...entry, count, share: +(100 * count / entry.ticket_counts.length).toFixed(1) };
+  }).sort((a, b) => b.share - a.share || b.count - a.count || a.region.localeCompare(b.region));
+  if (!entries.length) {
+    root.innerHTML = '<div class="note">No Milestone E6/E8 shipment IDs match the current table filters.</div>';
+    return;
+  }
+  const cells = entries.map(entry => {
+    const shade = Math.min(.72, .08 + entry.share / 100 * .64);
+    return '<td style="background:rgba(220,53,69,' + shade.toFixed(3) + ')" title="' +
+      attr(entry.region) + ': ' + entry.count.toLocaleString() + ' of ' + entry.ticket_counts.length.toLocaleString() +
+      ' shipment IDs (' + entry.share + '%) have more than ' + threshold + ' tickets">' +
+      '<span class="count">' + entry.count.toLocaleString() + '</span><span class="share">' + entry.share + '%</span></td>';
+  }).join('');
+  root.innerHTML = '<h4>More than ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets by region</h4>' +
+    '<div class="note">Each cell shows shipment IDs above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
+    '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
+      entries.map(entry => '<th>' + escHTML(entry.region) + '</th>').join('') +
+      '</tr></thead><tbody><tr><td>&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets</td>' +
+      cells + '</tr></tbody></table></div>';
+}
+
+function updateMilestoneTicketThresholdVisual() {
+  if (!milestoneTicketDistributionChart) return;
+  const raw = quickBookingState.milestoneTicketThreshold;
+  const threshold = Number(raw);
+  const hasThreshold = raw != null && String(raw).trim() !== '' && Number.isFinite(threshold) && threshold >= 0;
+  const startIndex = hasThreshold
+    ? milestoneTicketDistributionBands.findIndex(band => band.low > threshold) : -1;
+  const bars = milestoneTicketDistributionChart.data.datasets[0];
+  bars.backgroundColor = bars.data.map((_, index) => hasThreshold && startIndex >= 0 && index >= startIndex
+    ? 'rgba(220,53,69,.68)' : 'rgba(59,113,202,.72)');
+  bars.borderColor = bars.data.map((_, index) => hasThreshold && startIndex >= 0 && index >= startIndex
+    ? '#dc3545' : '#3b71ca');
+  milestoneTicketDistributionChart.$shipmentThresholdStart = hasThreshold && startIndex >= 0 ? startIndex : null;
+  milestoneTicketDistributionChart.update('none');
+}
+
+function renderMilestoneTicketDistribution(items) {
+  if (milestoneTicketDistributionChart) {
+    try { milestoneTicketDistributionChart.destroy(); } catch (_) { /* detached chart */ }
+    milestoneTicketDistributionChart = null;
+  }
+  const canvas = document.getElementById('milestoneTicketsPerShipmentDistribution');
+  if (!canvas || !items.length) return;
+  const values = items.map(item => Math.max(1, Number(item.ticket_count) || 1));
+  const max = Math.max(...values);
+  // Preserve exact values for normal distributions, then use a final 25+ band
+  // so an exceptional shipment cannot create an unreadable chart.
+  const exactLimit = Math.min(25, max);
+  const hasOverflowBand = max > exactLimit;
+  const bandCount = exactLimit + (hasOverflowBand ? 1 : 0);
+  const counts = Array(bandCount).fill(0);
+  for (const value of values) {
+    const index = hasOverflowBand && value >= exactLimit ? exactLimit : value - 1;
+    counts[index]++;
+  }
+  milestoneTicketDistributionBands = counts.map((_, index) => ({
+    low: hasOverflowBand && index === exactLimit ? exactLimit : index + 1,
+    high: hasOverflowBand && index === exactLimit ? Infinity : index + 1,
+  }));
+  const shares = counts.map(count => +(100 * count / values.length).toFixed(1));
+  const labels = counts.map((_, index) => {
+    const label = hasOverflowBand && index === exactLimit ? exactLimit + '+ tickets' : (index + 1) + (index === 0 ? ' ticket' : ' tickets');
+    return [label, shares[index] + '%'];
+  });
+  let running = 0;
+  const cumulative = counts.map(count => {
+    running += count;
+    return +(100 * running / values.length).toFixed(1);
+  });
+  milestoneTicketDistributionChart = new Chart(canvas, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'Shipment-ID share', data: shares, shipmentCounts: counts, backgroundColor: 'rgba(59,113,202,.72)', borderColor: '#3b71ca', borderWidth: 1, borderRadius: 3, yAxisID: 'y' },
+        { type: 'line', label: 'Cumulative share', data: cumulative, borderColor: '#dc3545', backgroundColor: '#dc3545', tension: .2, pointRadius: 2.5, pointHoverRadius: 4, yAxisID: 'y1' },
+      ],
+    },
+    plugins: [shipmentThresholdOverlayPlugin],
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } },
+        tooltip: { callbacks: { label: context => context.dataset.yAxisID === 'y1'
+          ? context.dataset.label + ': ' + context.raw + '%'
+          : context.dataset.label + ': ' + context.raw + '% (' +
+            context.dataset.shipmentCounts[context.dataIndex].toLocaleString() + ' shipment IDs)' } },
+      },
+      scales: {
+        x: { title: { display: true, text: 'Tickets per shipment ID' }, ticks: { maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 12 }, grid: { display: false } },
+        y: { beginAtZero: true, title: { display: true, text: 'Shipment-ID share' }, ticks: { callback: value => value + '%' }, grid: { color: 'rgba(33,37,41,.08)' } },
+        y1: { position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'Cumulative share' }, ticks: { callback: value => value + '%' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+  updateMilestoneTicketThresholdVisual();
 }
 
 function quickBookingTimeUnit(unit) {
@@ -6837,6 +6973,16 @@ function renderQuickBookingSection() {
   };
   const milestoneTicketStatisticLabel = quickBookingState.timeMetric === 'median' ? 'Median'
     : quickBookingState.timeMetric === 'max' ? 'Max' : 'Average';
+  const milestoneTicketDistributionItems = isMilestoneE6E8Scope ? visibleItems : [];
+  const milestoneTicketRegionBuckets = new Map();
+  for (const item of milestoneTicketDistributionItems) {
+    const region = item.region || 'Other';
+    if (!milestoneTicketRegionBuckets.has(region)) milestoneTicketRegionBuckets.set(region, []);
+    milestoneTicketRegionBuckets.get(region).push(Math.max(1, Number(item.ticket_count) || 1));
+  }
+  milestoneTicketCountsByRegion = [...milestoneTicketRegionBuckets.entries()]
+    .map(([region, ticket_counts]) => ({ region, ticket_counts }))
+    .sort((a, b) => a.region.localeCompare(b.region));
   const milestoneFlowTimesByRegion = new Map();
   if (isMilestoneE6E8Scope) {
     for (const item of visibleItems) {
@@ -6919,6 +7065,20 @@ function renderQuickBookingSection() {
       '<div><b>Multi-ticket shipments:</b> ' + multiShare + ' <span class="gsm-pct">(' +
         metric.multi_ticket_shipments.toLocaleString() + ' / ' + metric.shipments.toLocaleString() + ')</span></div></div>';
   };
+  const milestoneTicketDistributionSection = isMilestoneE6E8Scope
+    ? '<div class="chart-grid qb-milestone-ticket-distribution"><div class="chart-card full">' +
+      '<h3>Shipment-ID ticket distribution · Milestone E6/E8</h3>' +
+      '<div class="note">Bars show the share of shipment IDs by number of tickets; the line shows the cumulative share. The chart follows the current Shipment Analysis and table filters. ' +
+        milestoneTicketDistributionItems.length.toLocaleString() + ' shipment IDs are in scope.</div>' +
+      '<div class="qb-controls" style="margin:0 0 10px"><label class="qb-distribution-control">More than (tickets) ' +
+        '<input type="number" min="0" step="1" inputmode="numeric" value="' + attr(state.milestoneTicketThreshold) +
+        '" placeholder="e.g. 2" aria-label="Ticket count threshold per shipment ID" oninput="milestoneTicketDistributionThreshold(this.value)"></label>' +
+        '<output id="milestoneTicketThresholdResult" class="qb-threshold-result" aria-live="polite">' +
+          escHTML(milestoneTicketThresholdSummary(state.milestoneTicketThreshold)) + '</output>' +
+        '<span class="note" style="margin:0">Enter 2 to see shipment IDs with more than 2 tickets, including the region breakdown below.</span></div>' +
+      '<div class="chart-wrap"><canvas id="milestoneTicketsPerShipmentDistribution"></canvas></div>' +
+      '<div class="qb-threshold-matrix" id="milestoneTicketThresholdMatrix"></div></div></div>'
+    : '';
   const overallEfficiencySection = '<div class="chart-grid qb-efficiency-ranking"><div class="chart-card full">' +
     '<h3>Overall processing-time efficiency · Country / Region</h3>' +
     '<div class="note">Rank #1 is the most efficient (lowest ' + escHTML(metricLabel.toLowerCase()) + ' processing time) within the current Shipment Analysis scope and table filters. For Quick Booking, grouped <b>Ticket Without Shipment ID</b> work is included in this ranking. ' +
@@ -7239,6 +7399,7 @@ function renderQuickBookingSection() {
     '<div class="note" style="margin-top:10px">“Ticket Without Shipment ID” first combines all no-shipment tickets with the same Quick Booking ID, then calculates the selected statistic from each grouped work item&apos;s <b>total</b> time—not from individual ticket times. Those groups are included in <b>all Quick Booking work</b> above, while remaining separate from shipment-linked sequence metrics, charts, and region cards. They are also available in the detailed table with their own pill and filter. Region is taken from the assignment group of each grouped work item&apos;s latest opened ticket.</div>' +
     '<div class="kpi-row" style="margin-top:10px">' + regionCards + '</div>' +
     distributionSection +
+    milestoneTicketDistributionSection +
     overallEfficiencySection +
     teamAllocationSection +
     categoryRegionSection +
@@ -7256,6 +7417,13 @@ function renderQuickBookingSection() {
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
   renderShipmentTimeDistribution(distributionItems, time);
   updateShipmentThresholdMatrix();
+  if (isMilestoneE6E8Scope) {
+    renderMilestoneTicketDistribution(milestoneTicketDistributionItems);
+    updateMilestoneTicketThresholdMatrix();
+  } else if (milestoneTicketDistributionChart) {
+    try { milestoneTicketDistributionChart.destroy(); } catch (_) { /* detached chart */ }
+    milestoneTicketDistributionChart = null;
+  }
   if (quickBookingTeamAllocationChart) {
     quickBookingTeamAllocationChart.destroy();
     quickBookingTeamAllocationChart = null;
