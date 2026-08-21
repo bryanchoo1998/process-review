@@ -6373,18 +6373,24 @@ function updateMilestoneTicketThresholdMatrix() {
     : quickBookingState.timeMetric === 'max' ? 'Max' : 'Average';
   const formatTime = seconds => quickBookingState.timeUnit === 'minutes'
     ? (seconds / 60).toFixed(1) + 'm' : (seconds / 3600).toFixed(2) + 'h';
+  const timingCell = values => values.length
+    ? '<b>' + formatTime(selectedStatistic(values)) + '</b><br><span class="gsm-pct">' +
+      values.length.toLocaleString() + ' shipment IDs</span>'
+    : '<span class="gsm-pct">—</span>';
   const timingRows = entries.map(entry => {
     const lower = entry.shipment_values.filter(item => item.ticket_count <= threshold)
       .map(item => item.total_secs);
     const higher = entry.shipment_values.filter(item => item.ticket_count > threshold)
       .map(item => item.total_secs);
-    const timingCell = values => values.length
-      ? '<b>' + formatTime(selectedStatistic(values)) + '</b><br><span class="gsm-pct">' +
-        values.length.toLocaleString() + ' shipment IDs</span>'
-      : '<span class="gsm-pct">—</span>';
     return '<tr><td><b>' + escHTML(entry.region) + '</b></td><td class="num">' + timingCell(lower) +
       '</td><td class="num">' + timingCell(higher) + '</td></tr>';
   }).join('');
+  const totalLower = entries.flatMap(entry => entry.shipment_values
+    .filter(item => item.ticket_count <= threshold).map(item => item.total_secs));
+  const totalHigher = entries.flatMap(entry => entry.shipment_values
+    .filter(item => item.ticket_count > threshold).map(item => item.total_secs));
+  const timingTotalRow = '<tr><td><b>Total</b></td><td class="num">' + timingCell(totalLower) +
+    '</td><td class="num">' + timingCell(totalHigher) + '</td></tr>';
   root.innerHTML = '<h4>More than ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets by region</h4>' +
     '<div class="note">Each cell shows shipment IDs above the threshold, then that region&apos;s share. Darker red means a higher share.</div>' +
     '<div class="tbl-wrap"><table class="gtable"><thead><tr><th>Threshold</th>' +
@@ -6397,7 +6403,7 @@ function updateMilestoneTicketThresholdMatrix() {
       threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' tickets<br><span class="gsm-pct">' + metricLabel +
       ' time / shipment</span></th><th class="num">&gt; ' + threshold.toLocaleString(undefined, { maximumFractionDigits: 0 }) +
       ' tickets<br><span class="gsm-pct">' + metricLabel + ' time / shipment</span></th></tr></thead><tbody>' +
-      timingRows + '</tbody></table></div>';
+      timingRows + '</tbody><tfoot>' + timingTotalRow + '</tfoot></table></div>';
 }
 
 function updateMilestoneTicketThresholdVisual() {
