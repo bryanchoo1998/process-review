@@ -198,6 +198,13 @@ function shipmentKeysForTask(shipmentId) {
   return splitShipmentIds(shipmentId);
 }
 
+// Keep this source fact in compact large-file imports. It lets their
+// shipment analysis use the same Consol-ID recovery rule as normal imports.
+function hasNaShipmentId(shipmentId) {
+  const value = normKey(shipmentId);
+  return value === 'NA' || value === 'N/A';
+}
+
 function extractKeywords(text) {
   const cleaned = (text || '').replace(TAG_RE, ' ');
   const tokens = new Set();
@@ -396,7 +403,7 @@ const PARENT_DDL = `CREATE TABLE parent (
   category TEXT, sub_category TEXT, source TEXT, country TEXT, email TEXT, mailbox TEXT,
   opened_at TEXT, opened_ts INTEGER, time_worked INTEGER,
   short_desc TEXT, sd_norm TEXT, has_content INTEGER DEFAULT 0, assigned_to TEXT, reason TEXT,
-  quick_booking_id TEXT, has_shipment_id INTEGER DEFAULT 0,
+  quick_booking_id TEXT, has_shipment_id INTEGER DEFAULT 0, has_na_shipment_id INTEGER DEFAULT 0,
   is_dup INTEGER DEFAULT 0, dup_by TEXT DEFAULT '',
   cluster_id INTEGER, dup_basis TEXT DEFAULT '',
   burst_id INTEGER, burst_kind TEXT DEFAULT ''
@@ -405,7 +412,8 @@ const PARENT_DDL = `CREATE TABLE parent (
 const CHILD_DDL = `CREATE TABLE child (
   number TEXT PRIMARY KEY, consol_key TEXT, short_desc TEXT, agroup TEXT,
   state TEXT, category TEXT, opened_at TEXT, opened_ts INTEGER,
-  time_worked INTEGER, link_method TEXT, n_parents INTEGER, parent_number TEXT
+  time_worked INTEGER, link_method TEXT, n_parents INTEGER, parent_number TEXT,
+  has_na_shipment_id INTEGER DEFAULT 0
 )`;
 
 const DUP_CLUSTER_DDL = `CREATE TABLE dup_cluster (
@@ -764,9 +772,9 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     const parentInsert = db.prepare(`INSERT INTO parent
       (number, consol_key, agroup, state, category, sub_category, source,
        country, email, mailbox, opened_at, opened_ts, time_worked,
-       short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+       short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id, has_na_shipment_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const shipInsert = db.prepare('INSERT INTO ship_link VALUES (?,?)');
     const childShipInsert = db.prepare('INSERT INTO child_ship_link VALUES (?,?)');
     let lastRowId = 0;
@@ -786,12 +794,13 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
         const openedTs = parseCsvDate(r.opened_at);
         const consolKey = normKey(r.consol_id || '');
         const tw = parseTimeWorked(r.time_worked);
+        const missingShipmentIsNa = hasNaShipmentId(r.shipment_id);
         if (source === 'Child Task') {
           totalChildren++;
           childInsert.bind([num, consolKey, norm(r.short_desc || ''),
             norm(r.assignment_group || '') || '(unassigned)', norm(r.state || ''),
             norm(r.category || ''), (r.opened_at || '').trim(), openedTs, tw,
-            '', 0, '']);
+            '', 0, '', missingShipmentIsNa ? 1 : 0]);
           childInsert.step();
           childInsert.reset();
           for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
@@ -808,7 +817,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
           source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(),
           norm(r.mailbox || ''), (r.opened_at || '').trim(), openedTs, tw,
           sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || ''),
-          norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0]);
+          norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0, missingShipmentIsNa ? 1 : 0]);
         parentInsert.step();
         parentInsert.reset();
         for (const sid of shipmentKeys) {
@@ -906,8 +915,8 @@ function buildDerived(db, dbId) {
   const parentInsert = db.prepare(`INSERT INTO parent
     (number, consol_key, agroup, state, category, sub_category, source,
      country, email, mailbox, opened_at, opened_ts, time_worked,
-     short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id, has_na_shipment_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   // Process in batches to avoid memory issues
   const BATCH_SIZE = 2000;
@@ -935,6 +944,7 @@ function buildDerived(db, dbId) {
           opened_at: (r.opened_at || '').trim(),
           opened_ts: openedTs,
           time_worked: parseTimeWorked(r.time_worked),
+          has_na_shipment_id: hasNaShipmentId(r.shipment_id) ? 1 : 0,
         });
         for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
           if (!shipToChildren.has(sid)) shipToChildren.set(sid, new Set());
@@ -957,7 +967,7 @@ function buildDerived(db, dbId) {
         source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(), norm(r.mailbox || ''),
         (r.opened_at || '').trim(), openedTs, tw,
         sd, sdNorm, hasContent, norm(r.assigned_to || ''), norm(r.reason || ''),
-        norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0,
+        norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0, hasNaShipmentId(r.shipment_id) ? 1 : 0,
       ]);
       parentInsert.step();
       parentInsert.reset();
@@ -1339,16 +1349,17 @@ function buildDerived(db, dbId) {
       opened_at: ch.opened_at, opened_ts: ch.opened_ts, time_worked: ch.time_worked,
       link_method: method || '', n_parents: matched.size,
       parent_number: sortedParents[0] || '',
+      has_na_shipment_id: ch.has_na_shipment_id,
     });
   }
 
   runSQL(db, CHILD_DDL);
-  const childInsert = db.prepare(`INSERT INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const childInsert = db.prepare(`INSERT INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   for (const ch of childRows) {
     childInsert.bind([
       ch.number, ch.consol_key, ch.short_desc, ch.agroup, ch.state, ch.category,
       ch.opened_at, ch.opened_ts, ch.time_worked, ch.link_method,
-      ch.n_parents, ch.parent_number,
+      ch.n_parents, ch.parent_number, ch.has_na_shipment_id,
     ]);
     childInsert.step();
     childInsert.reset();
@@ -2606,6 +2617,24 @@ function getShipmentAnalysisRows(filters = {}) {
   if (filters.sub_category) { clauses.push('sub_category = ?'); args.push(filters.sub_category); }
   if (filters.agroup) { clauses.push('agroup = ?'); args.push(filters.agroup); }
   const where = clauses.length ? clauses.join(' AND ') : '1=1';
+  const parentColumns = new Set(tableColumns(db, 'parent'));
+  const childColumns = hasTable(db, 'child') ? new Set(tableColumns(db, 'child')) : new Set();
+  // New normal and large-file imports retain this compact marker. Older
+  // imported databases fall back to the raw tasks table when it is available.
+  const parentHasNaShipmentMarker = parentColumns.has('has_na_shipment_id');
+  const childHasNaShipmentMarker = childColumns.has('has_na_shipment_id');
+  const parentNaShipmentPredicate = parentHasNaShipmentMarker
+    ? 'p.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
+  const childNaShipmentPredicate = childHasNaShipmentMarker
+    ? 'c.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = c.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
   // Older imported databases lack this bridge. New CSV/DB imports create it,
   // while the empty branch keeps legacy dashboards usable until re-imported.
   const childRowsSql = hasTable(db, 'child') && hasTable(db, 'child_ship_link')
@@ -2620,7 +2649,7 @@ function getShipmentAnalysisRows(filters = {}) {
   // A row with Shipment ID = NA/N/A can still be tied to a real work item by
   // Consol ID. Apply that recovery consistently across every category, but
   // never collapse placeholder Consol IDs (NA, N/A, etc.) into one shipment.
-  const consolFallbackParentRowsSql = hasTable(db, 'tasks')
+  const consolFallbackParentRowsSql = parentNaShipmentPredicate !== '0'
     ? `UNION ALL
        SELECT 'CONSOL: ' || p.consol_key AS shipment_id, 'parent:' || p.number AS ticket_key,
               p.number, p.state, p.reason, p.opened_at, p.opened_ts, p.country,
@@ -2628,11 +2657,10 @@ function getShipmentAnalysisRows(filters = {}) {
        FROM parent p
        WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
          AND UPPER(TRIM(p.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
-         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
-           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
-         AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)`
+         AND ${parentNaShipmentPredicate}
+         ${parentHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)'}`
     : '';
-  const consolFallbackChildRowsSql = hasTable(db, 'tasks') && hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+  const consolFallbackChildRowsSql = childNaShipmentPredicate !== '0' && hasTable(db, 'child') && hasTable(db, 'child_ship_link')
     ? `UNION ALL
        SELECT 'CONSOL: ' || c.consol_key AS shipment_id, 'child:' || c.number AS ticket_key,
               c.number, c.state, '' AS reason, c.opened_at, c.opened_ts, '' AS country,
@@ -2640,9 +2668,8 @@ function getShipmentAnalysisRows(filters = {}) {
        FROM child c
        WHERE c.consol_key IS NOT NULL AND c.consol_key != ''
          AND UPPER(TRIM(c.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
-         AND EXISTS (SELECT 1 FROM tasks t WHERE t.number = c.number
-           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))
-         AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)`
+         AND ${childNaShipmentPredicate}
+         ${childHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)'}`
     : '';
   const rows = queryAll(db,
     `WITH source_rows AS (
@@ -3974,9 +4001,9 @@ async function processLargeCSVFile(file) {
             return value == null ? '' : String(value);
           };
           const parentStmtFor = n => db.prepare(`INSERT OR IGNORE INTO parent
-            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id)
-            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
-          const childStmtFor = n => db.prepare(`INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id,has_na_shipment_id)
+            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+          const childStmtFor = n => db.prepare(`INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const shipStmtFor = n => db.prepare(`INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           const childShipStmtFor = n => db.prepare(`INSERT INTO child_ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           runSQL(db, 'BEGIN IMMEDIATE');
@@ -3992,24 +4019,26 @@ async function processLargeCSVFile(file) {
                 const agroup = norm(read(row, 'assignment_group')) || '(unassigned)';
                 const state = norm(read(row, 'state'));
                 const category = norm(read(row, 'category'));
-                const shipmentKeys = shipmentKeysForTask(read(row, 'shipment_id'));
+                const rawShipmentId = read(row, 'shipment_id');
+                const shipmentKeys = shipmentKeysForTask(rawShipmentId);
+                const missingShipmentIsNa = hasNaShipmentId(rawShipmentId);
                 const shortDesc = norm(read(row, 'short_desc'));
                 const timeWorked = parseTimeWorked(read(row, 'time_worked'));
                 if (source === 'Child Task') {
                   children.push(number, normKey(read(row, 'consol_id')), shortDesc, agroup, state, category,
-                    openedAt, openedTs, timeWorked, '', 0, '');
-                  for (const sid of shipmentKeysForTask(read(row, 'shipment_id'), category, read(row, 'quick_booking_id'))) childShips.push(sid, number);
+                    openedAt, openedTs, timeWorked, '', 0, '', missingShipmentIsNa ? 1 : 0);
+                  for (const sid of shipmentKeysForTask(rawShipmentId, category, read(row, 'quick_booking_id'))) childShips.push(sid, number);
                   continue;
                 }
                 parents.push(number, normKey(read(row, 'consol_id')), agroup, state, category,
                   norm(read(row, 'sub_category')), source || '(empty)', norm(read(row, 'country')),
                   read(row, 'email').trim().toLowerCase(), norm(read(row, 'mailbox')), openedAt, openedTs,
                   timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')),
-                  norm(read(row, 'reason')), norm(read(row, 'quick_booking_id')), shipmentKeys.length ? 1 : 0);
+                  norm(read(row, 'reason')), norm(read(row, 'quick_booking_id')), shipmentKeys.length ? 1 : 0, missingShipmentIsNa ? 1 : 0);
                 for (const sid of shipmentKeys) ships.push(sid, number);
               }
-              if (parents.length) { const stmt = parentStmtFor(parents.length / 20); stmt.run(parents); stmt.free(); }
-              if (children.length) { const stmt = childStmtFor(children.length / 12); stmt.run(children); stmt.free(); }
+              if (parents.length) { const stmt = parentStmtFor(parents.length / 21); stmt.run(parents); stmt.free(); }
+              if (children.length) { const stmt = childStmtFor(children.length / 13); stmt.run(children); stmt.free(); }
               if (ships.length) { const stmt = shipStmtFor(ships.length / 2); stmt.run(ships); stmt.free(); }
               if (childShips.length) { const stmt = childShipStmtFor(childShips.length / 2); stmt.run(childShips); stmt.free(); }
             }
@@ -7732,7 +7761,7 @@ function renderShipmentRegionSection() {
 // This view stays lazy because median calculation needs the individual logged
 // time values. It is scoped to the active Team filter, just like the other
 // dashboard pages.
-const reasonAnalysisState = { metric: 'average', timeSearch: '', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
+const reasonAnalysisState = { timeSearch: '', outlierMode: 'cap-p99', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
 let reasonAnalysisCharts = [];
 let reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
 
@@ -7750,6 +7779,24 @@ function reasonMedian(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function reasonPercentile(values, percentile) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * percentile;
+  const lower = Math.floor(index), upper = Math.ceil(index);
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+function reasonCohortOutlierStats(values) {
+  const q1 = reasonPercentile(values, 0.25);
+  const q3 = reasonPercentile(values, 0.75);
+  const threshold = q3 + 3 * (q3 - q1);
+  return {
+    p99: reasonPercentile(values, 0.99),
+    iqrExtremeCount: values.filter(value => value > threshold).length,
+  };
+}
+
 function reasonMinutes(value) {
   return value == null || !isFinite(value) ? '—' : (+value).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' min';
 }
@@ -7759,8 +7806,8 @@ function reasonAnalysisSearch(kind, value) {
   renderReasonAnalysis();
 }
 
-function reasonAnalysisMetric(value) {
-  reasonAnalysisState.metric = value === 'median' ? 'median' : 'average';
+function reasonAnalysisOutlierMode(value) {
+  reasonAnalysisState.outlierMode = value === 'include' ? 'include' : 'cap-p99';
   renderReasonAnalysis();
 }
 
@@ -7807,6 +7854,10 @@ function renderReasonAnalysis() {
       (row.has_reason ? item.withReason : item.withoutReason).push(row.secs / 60);
       cachedTimeByCategory.set(row.category, item);
     }
+    for (const item of cachedTimeByCategory.values()) {
+      item.withOutliers = reasonCohortOutlierStats(item.withReason);
+      item.withoutOutliers = reasonCohortOutlierStats(item.withoutReason);
+    }
     const cachedReasonTimeRows = queryWithRetry(db,
       `SELECT ${categoryExpr} category, TRIM(p.reason) reason, p.time_worked secs
          FROM parent p
@@ -7833,20 +7884,37 @@ function renderReasonAnalysis() {
   // `time_worked` is stored by the app as seconds. Restricting the comparison
   // to positive values prevents blank imports (normalised to zero) from being
   // mistaken for an observed handling time.
-  const metric = reasonAnalysisState.metric;
-  const stat = values => metric === 'median'
-    ? reasonMedian(values)
-    : (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0);
-  const timeData = reasonAnalysisCache.timeGroups.map(item => ({
-    category: item.category,
-    withCount: item.withReason.length,
-    withoutCount: item.withoutReason.length,
-    reasonCount: byCategory.get(item.category) || 0,
-    reasonPercent: (byCategory.get(item.category) || 0) / (categoryTotals.get(item.category) || 1),
-    withValue: stat(item.withReason),
-    withoutValue: stat(item.withoutReason),
-    difference: stat(item.withReason) - stat(item.withoutReason),
-  })).sort((a, b) => (b.withCount + b.withoutCount) - (a.withCount + a.withoutCount));
+  const average = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const treatOutliers = (values, item, population) => {
+    if (reasonAnalysisState.outlierMode !== 'cap-p99') return values;
+    const stats = population === 'with-reason' ? item.withOutliers : item.withoutOutliers;
+    return values.map(value => Math.min(value, stats.p99));
+  };
+  const timeGroupByCategory = new Map(reasonAnalysisCache.timeGroups.map(item => [item.category, item]));
+  const timeData = reasonAnalysisCache.timeGroups.map(item => {
+    const withValues = treatOutliers(item.withReason, item, 'with-reason');
+    const withoutValues = treatOutliers(item.withoutReason, item, 'without-reason');
+    return {
+      category: item.category,
+      withCount: item.withReason.length,
+      withoutCount: item.withoutReason.length,
+      reasonCount: byCategory.get(item.category) || 0,
+      reasonPercent: (byCategory.get(item.category) || 0) / (categoryTotals.get(item.category) || 1),
+      withOutlierCount: item.withOutliers.iqrExtremeCount,
+      withoutOutlierCount: item.withoutOutliers.iqrExtremeCount,
+      outlierCount: item.withOutliers.iqrExtremeCount + item.withoutOutliers.iqrExtremeCount,
+      withAverage: average(withValues),
+      withMedian: reasonMedian(withValues),
+      withP90: reasonPercentile(withValues, 0.90),
+      withP95: reasonPercentile(withValues, 0.95),
+      withoutAverage: average(withoutValues),
+      withoutMedian: reasonMedian(withoutValues),
+      withoutP90: reasonPercentile(withoutValues, 0.90),
+      withoutP95: reasonPercentile(withoutValues, 0.95),
+      averageDifference: average(withValues) - average(withoutValues),
+      medianDifference: reasonMedian(withValues) - reasonMedian(withoutValues),
+    };
+  }).sort((a, b) => (b.withCount + b.withoutCount) - (a.withCount + a.withoutCount));
 
   const timeNeedle = reasonAnalysisState.timeSearch.trim().toLowerCase();
   const visibleTimeRows = timeData.filter(row => !timeNeedle || row.category.toLowerCase().includes(timeNeedle));
@@ -7862,29 +7930,28 @@ function renderReasonAnalysis() {
   const expandedDetail = category => {
     const rows = reasonRows.filter(row => row.category === category);
     if (!rows.length) return '<div class="note">No tickets with a reason in this category.</div>';
-    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Tickets with logged time</th><th class="num">' + selectedLabel + ' time worked</th></tr></thead><tbody>' +
-      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(stat(timing)) : '—') + '</td></tr>'; }).join('') +
+    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Tickets with logged time</th><th class="num">Average time worked</th><th class="num">Median time worked</th><th class="num">P90 time worked</th><th class="num">P95 time worked</th></tr></thead><tbody>' +
+      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; const categoryTime = timeGroupByCategory.get(category); const treatedTiming = categoryTime ? treatOutliers(timing, categoryTime, 'with-reason') : timing; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr>'; }).join('') +
       '</tbody></table></div>';
   };
   const topCategories = categoryRows.slice(0, 15);
   const topTime = [...timeData].filter(row => row.withCount && row.withoutCount)
-    .sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference)).slice(0, 15);
-  const selectedLabel = metric === 'median' ? 'Median' : 'Average';
+    .sort((a, b) => Math.max(Math.abs(b.averageDifference), Math.abs(b.medianDifference)) - Math.max(Math.abs(a.averageDifference), Math.abs(a.medianDifference))).slice(0, 15);
 
   reasonAnalysisCharts.forEach(chart => { try { chart.destroy(); } catch (_) {} });
   reasonAnalysisCharts = [];
   root.innerHTML =
     '<div class="chart-grid"><div class="chart-card full"><h3>Reason analysis and time</h3>' +
-      '<div class="note">Reasons show why tickets were held or reworked. Time comparisons use positive logged <b>time_worked</b> values, converted from seconds to minutes, and follow the active team filter.</div>' +
+      '<div class="note">Reasons show why tickets were held or reworked. Time comparisons use positive logged <b>time_worked</b> values, converted from seconds to minutes, and follow the active team filter. Raw values are retained; the control below only changes the calculation view.</div>' +
       '<div class="kpi-row" style="margin-top:12px">' +
         '<div class="kpi info"><div class="kpi-label">Tickets with a reason</div><div class="kpi-value">' + reasonTickets.toLocaleString() + '</div><div class="kpi-sub">across ' + categoryRows.length.toLocaleString() + ' categories</div></div>' +
         '<div class="kpi purple"><div class="kpi-label">Reason types</div><div class="kpi-value">' + new Set(reasonRows.map(row => row.reason)).size.toLocaleString() + '</div><div class="kpi-sub">used in the selected tickets</div></div>' +
         '<div class="kpi"><div class="kpi-label">Most common category</div><div class="kpi-value" style="font-size:1.05rem">' + escHTML(topCategories[0]?.category || '—') + '</div><div class="kpi-sub">' + (topCategories[0]?.count || 0).toLocaleString() + ' tickets with a reason</div></div>' +
       '</div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Top categories with a reason</h3><div class="chart-wrap tall"><canvas id="reasonCategoryChart"></canvas></div></div>' +
-      '<div class="chart-card"><h3>Largest time difference by category</h3><div class="table-ctl"><label>Statistic <select onchange="reasonAnalysisMetric(this.value)"><option value="average"' + (metric === 'average' ? ' selected' : '') + '>Average</option><option value="median"' + (metric === 'median' ? ' selected' : '') + '>Median</option></select></label></div><div class="chart-wrap tall"><canvas id="reasonTimeChart"></canvas></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>' + selectedLabel + ' time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'withValue\')" style="cursor:pointer">With reason: ' + selectedLabel.toLowerCase() + sortArrow('withValue') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutValue\')" style="cursor:pointer">Without reason: ' + selectedLabel.toLowerCase() + sortArrow('withoutValue') + '</th><th class="num" onclick="reasonAnalysisSort(\'difference\')" style="cursor:pointer">Difference' + sortArrow('difference') + '</th></tr></thead><tbody>' +
-      (visibleTimeRows.length ? visibleTimeRows.map(row => '<tr><td><button type="button" data-category="' + attr(row.category) + '" onclick="reasonAnalysisToggle(this.dataset.category)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (reasonAnalysisState.expandedCategories.has(row.category) ? '▾ ' : '▸ ') + escHTML(row.category) + '</button></td><td class="num">' + row.withCount.toLocaleString() + '</td><td class="num">' + (100 * row.reasonPercent).toFixed(2) + '%</td><td class="num">' + (row.withCount ? reasonMinutes(row.withValue) : '—') + '</td><td class="num">' + row.withoutCount.toLocaleString() + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutValue) : '—') + '</td><td class="num" style="color:' + (row.difference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.difference >= 0 ? '+' : '') + reasonMinutes(row.difference) : '—') + '</td></tr>' + (reasonAnalysisState.expandedCategories.has(row.category) ? '<tr><td colspan="7">' + expandedDetail(row.category) + '</td></tr>' : '')).join('') : '<tr><td colspan="7">No categories match this search.</td></tr>') +
+      '<div class="chart-card"><h3>Largest time difference by category</h3><div class="note">Average and median minutes are shown together.</div><div class="chart-wrap tall"><canvas id="reasonTimeChart"></canvas></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><label>Extreme values <select onchange="reasonAnalysisOutlierMode(this.value)"><option value="cap-p99"' + (reasonAnalysisState.outlierMode === 'cap-p99' ? ' selected' : '') + '>Cap cohorts at category p99</option><option value="include"' + (reasonAnalysisState.outlierMode === 'include' ? ' selected' : '') + '>Include extremes</option></select></label><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="note">IQR extremes are values above Q3 + 3×IQR, calculated separately within each category and reason-status cohort. ' + (reasonAnalysisState.outlierMode === 'cap-p99' ? 'Time values are capped separately at each cohort&apos;s category p99.' : 'All logged values are included in the calculations.') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'outlierCount\')" style="cursor:pointer">IQR extremes W / W/O' + sortArrow('outlierCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withAverage\')" style="cursor:pointer">With: average' + sortArrow('withAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withMedian\')" style="cursor:pointer">With: median' + sortArrow('withMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP90\')" style="cursor:pointer">With: p90' + sortArrow('withP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP95\')" style="cursor:pointer">With: p95' + sortArrow('withP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutAverage\')" style="cursor:pointer">Without: average' + sortArrow('withoutAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutMedian\')" style="cursor:pointer">Without: median' + sortArrow('withoutMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP90\')" style="cursor:pointer">Without: p90' + sortArrow('withoutP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP95\')" style="cursor:pointer">Without: p95' + sortArrow('withoutP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'averageDifference\')" style="cursor:pointer">Average difference' + sortArrow('averageDifference') + '</th><th class="num" onclick="reasonAnalysisSort(\'medianDifference\')" style="cursor:pointer">Median difference' + sortArrow('medianDifference') + '</th></tr></thead><tbody>' +
+      (visibleTimeRows.length ? visibleTimeRows.map(row => '<tr><td><button type="button" data-category="' + attr(row.category) + '" onclick="reasonAnalysisToggle(this.dataset.category)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (reasonAnalysisState.expandedCategories.has(row.category) ? '▾ ' : '▸ ') + escHTML(row.category) + '</button></td><td class="num">' + row.withCount.toLocaleString() + '</td><td class="num">' + (100 * row.reasonPercent).toFixed(2) + '%</td><td class="num" style="color:' + (row.outlierCount ? 'var(--red)' : 'var(--text3)') + '">' + row.withOutlierCount.toLocaleString() + ' / ' + row.withoutOutlierCount.toLocaleString() + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withAverage) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withMedian) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP90) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP95) : '—') + '</td><td class="num">' + row.withoutCount.toLocaleString() + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutAverage) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutMedian) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP90) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP95) : '—') + '</td><td class="num" style="color:' + (row.averageDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.averageDifference >= 0 ? '+' : '') + reasonMinutes(row.averageDifference) : '—') + '</td><td class="num" style="color:' + (row.medianDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.medianDifference >= 0 ? '+' : '') + reasonMinutes(row.medianDifference) : '—') + '</td></tr>' + (reasonAnalysisState.expandedCategories.has(row.category) ? '<tr><td colspan="15">' + expandedDetail(row.category) + '</td></tr>' : '')).join('') : '<tr><td colspan="15">No categories match this search.</td></tr>') +
       '</tbody></table></div></div></div>';
 
   const catCanvas = document.getElementById('reasonCategoryChart');
@@ -7894,8 +7961,11 @@ function renderReasonAnalysis() {
   }));
   const timeCanvas = document.getElementById('reasonTimeChart');
   if (timeCanvas && topTime.length) reasonAnalysisCharts.push(new Chart(timeCanvas, {
-    type: 'bar', data: { labels: topTime.map(row => row.category), datasets: [{ label: selectedLabel + ' difference (minutes)', data: topTime.map(row => row.difference), backgroundColor: topTime.map(row => row.difference < 0 ? 'rgba(220,53,69,.75)' : 'rgba(13,148,136,.78)'), borderRadius: 4 }] },
-    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => (ctx.parsed.x >= 0 ? '+' : '') + ctx.parsed.x.toFixed(1) + ' minutes' } } }, scales: { x: { title: { display: true, text: selectedLabel + ' minutes: with reason − without reason' } }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } } },
+    type: 'bar', data: { labels: topTime.map(row => row.category), datasets: [
+      { label: 'Average difference', data: topTime.map(row => row.averageDifference), backgroundColor: 'rgba(13,148,136,.78)', borderRadius: 4 },
+      { label: 'Median difference', data: topTime.map(row => row.medianDifference), backgroundColor: 'rgba(124,58,237,.72)', borderRadius: 4 },
+    ] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.x >= 0 ? '+' : '') + ctx.parsed.x.toFixed(1) + ' minutes' } } }, scales: { x: { title: { display: true, text: 'Minutes: with reason − without reason' } }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } } },
   }));
 }
 
