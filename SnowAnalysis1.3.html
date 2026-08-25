@@ -444,10 +444,20 @@ const DGS_DDL = `CREATE TABLE dup_group_source (consol_key TEXT, source TEXT)`;
 // ── Cost & Capacity — live aggregates from the uploaded CSV ───────────────
 let milestoneCapacityCacheDB = null;
 let milestoneCapacityCache = new Map();
+let costCapacityCacheDB = null;
+let costCapacityCache = new Map();
+let rawSummaryCacheDB = null;
+let rawSummaryCache = new Map();
+let rawSortIndexDBs = new WeakSet();
 
 function clearMilestoneCapacityCache() {
   milestoneCapacityCacheDB = null;
   milestoneCapacityCache.clear();
+  costCapacityCacheDB = null;
+  costCapacityCache.clear();
+  rawSummaryCacheDB = null;
+  rawSummaryCache.clear();
+  rawSortIndexDBs = new WeakSet();
 }
 
 // Return one compact row per Milestone Shipment ID. This deliberately mirrors
@@ -483,7 +493,8 @@ function getMilestoneShipmentModeWaste(groups = []) {
   const childRowsSql = hasTable(db, 'child') && hasTable(db, 'child_ship_link')
     ? `SELECT csl.sid AS shipment_id, 'child:' || c.number AS ticket_key,
               c.number, c.opened_ts, c.category, c.time_worked, c.agroup
-       FROM child c JOIN child_ship_link csl ON csl.number = c.number`
+       FROM child c JOIN child_ship_link csl ON csl.number = c.number
+       WHERE c.category = 'Milestone E6 E8 (ATD and ATA)'`
     : `SELECT NULL AS shipment_id, '' AS ticket_key, '' AS number,
               NULL AS opened_ts, '' AS category, 0 AS time_worked, '' AS agroup WHERE 0`;
   const consolFallbackParentRowsSql = parentNaShipmentPredicate !== '0'
@@ -492,6 +503,7 @@ function getMilestoneShipmentModeWaste(groups = []) {
               p.number, p.opened_ts, p.category, p.time_worked, p.agroup
        FROM parent p
        WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
+         AND p.category = 'Milestone E6 E8 (ATD and ATA)'
          AND UPPER(TRIM(p.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
          AND ${parentNaShipmentPredicate}
          ${parentHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)'}`
@@ -502,6 +514,7 @@ function getMilestoneShipmentModeWaste(groups = []) {
               c.number, c.opened_ts, c.category, c.time_worked, c.agroup
        FROM child c
        WHERE c.consol_key IS NOT NULL AND c.consol_key != ''
+         AND c.category = 'Milestone E6 E8 (ATD and ATA)'
          AND UPPER(TRIM(c.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
          AND ${childNaShipmentPredicate}
          ${childHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)'}`
@@ -514,6 +527,7 @@ function getMilestoneShipmentModeWaste(groups = []) {
               p.number, p.opened_ts, p.category, p.time_worked, p.agroup
        FROM parent p JOIN ship_link sl ON sl.number = p.number
        WHERE sl.sid IS NOT NULL AND sl.sid != ''
+         AND p.category = 'Milestone E6 E8 (ATD and ATA)'
        UNION ALL
        ${childRowsSql}
        ${consolFallbackParentRowsSql}
@@ -524,7 +538,7 @@ function getMilestoneShipmentModeWaste(groups = []) {
      ), filtered_rows AS (
        SELECT sr.*, sr.time_worked * 1.0 / sc.shipment_count AS allocated_secs
        FROM source_rows sr JOIN shipment_counts sc ON sc.ticket_key = sr.ticket_key
-       WHERE sr.category = 'Milestone E6 E8 (ATD and ATA)'${groupSql}
+       WHERE 1=1${groupSql}
      ), ranked_rows AS (
        SELECT fr.*,
               ROW_NUMBER() OVER (
@@ -573,14 +587,37 @@ function getMilestoneShipmentModeWaste(groups = []) {
 function getCostCapacityMetrics(opts = {}) {
   const db = getPrimaryDB();
   if (!hasTable(db, 'parent')) return { available: false, message: 'Upload a CSV to calculate capacity metrics.' };
-  const groups = (Array.isArray(opts.groups) ? opts.groups : []).filter(Boolean);
+  if (costCapacityCacheDB !== db) {
+    costCapacityCacheDB = db;
+    costCapacityCache.clear();
+  }
+  const groups = [...new Set((Array.isArray(opts.groups) ? opts.groups : []).filter(Boolean))].sort();
+  const thresholdSecs = Math.max(0, Number(opts.quickBookingThresholdMin || 7) * 60);
+  const cacheKey = JSON.stringify([groups, thresholdSecs]);
+  if (costCapacityCache.has(cacheKey)) return costCapacityCache.get(cacheKey);
   const groupSql = groups.length ? ' AND agroup IN (' + groups.map(() => '?').join(',') + ')' : '';
   const groupArgs = groups.slice();
-  const one = (sql, args = []) => queryOne(db, sql, args) || {};
-  const metric = (where, args = []) => one(
-    `SELECT COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs, COALESCE(AVG(time_worked),0) AS avg_secs
-     FROM parent WHERE ${where}${groupSql}`, [...args, ...groupArgs]);
-  const thresholdSecs = Math.max(0, Number(opts.quickBookingThresholdMin || 7) * 60);
+  // Calculate the six headline cohorts in one pass through parent. The old
+  // version issued six separate whole-table scans every time this tab opened.
+  const base = queryOne(db, `SELECT
+      SUM(CASE WHEN LOWER(COALESCE(source,'')) LIKE '%email%' THEN 1 ELSE 0 END) AS email_tickets,
+      COALESCE(SUM(CASE WHEN LOWER(COALESCE(source,'')) LIKE '%email%' THEN time_worked ELSE 0 END),0) AS email_secs,
+      SUM(CASE WHEN LOWER(TRIM(COALESCE(category,''))) = 'shipping instruction' AND TRIM(COALESCE(reason,'')) != '' THEN 1 ELSE 0 END) AS si_tickets,
+      COALESCE(SUM(CASE WHEN LOWER(TRIM(COALESCE(category,''))) = 'shipping instruction' AND TRIM(COALESCE(reason,'')) != '' THEN time_worked ELSE 0 END),0) AS si_secs,
+      SUM(CASE WHEN LOWER(TRIM(COALESCE(category,''))) = 'invoicing' THEN 1 ELSE 0 END) AS invoicing_tickets,
+      COALESCE(SUM(CASE WHEN LOWER(TRIM(COALESCE(category,''))) = 'invoicing' THEN time_worked ELSE 0 END),0) AS invoicing_secs,
+      SUM(CASE WHEN LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete' THEN 1 ELSE 0 END) AS closed_tickets,
+      COALESCE(SUM(CASE WHEN LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete' THEN time_worked ELSE 0 END),0) AS closed_secs,
+      SUM(CASE WHEN TRIM(COALESCE(reason,'')) != '' THEN 1 ELSE 0 END) AS reason_tickets,
+      COALESCE(SUM(CASE WHEN TRIM(COALESCE(reason,'')) != '' THEN time_worked ELSE 0 END),0) AS reason_secs,
+      SUM(CASE WHEN TRIM(COALESCE(reason,'')) = '' THEN 1 ELSE 0 END) AS blank_tickets,
+      COALESCE(SUM(CASE WHEN TRIM(COALESCE(reason,'')) = '' THEN time_worked ELSE 0 END),0) AS blank_secs
+    FROM parent WHERE 1=1${groupSql}`, groupArgs) || {};
+  const metricFrom = (ticketKey, secsKey) => {
+    const tickets = Number(base[ticketKey] || 0);
+    const secs = Number(base[secsKey] || 0);
+    return { tickets, secs, avg_secs: tickets ? secs / tickets : 0 };
+  };
   const quickBooking = queryAll(db,
     `SELECT COALESCE(NULLIF(country,''),'Unspecified') AS country,
             COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs,
@@ -589,12 +626,12 @@ function getCostCapacityMetrics(opts = {}) {
      FROM parent WHERE LOWER(TRIM(COALESCE(category,''))) = 'quick booking'${groupSql}
      GROUP BY COALESCE(NULLIF(country,''),'Unspecified') ORDER BY tickets DESC LIMIT 8`,
     [thresholdSecs, ...groupArgs]);
-  const email = metric("LOWER(COALESCE(source,'')) LIKE '%email%'");
-  const siReason = metric("LOWER(TRIM(COALESCE(category,''))) = 'shipping instruction' AND TRIM(COALESCE(reason,'')) != ''");
-  const invoicing = metric("LOWER(TRIM(COALESCE(category,''))) = 'invoicing'");
-  const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
-  const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
-  const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
+  const email = metricFrom('email_tickets', 'email_secs');
+  const siReason = metricFrom('si_tickets', 'si_secs');
+  const invoicing = metricFrom('invoicing_tickets', 'invoicing_secs');
+  const closedIncomplete = metricFrom('closed_tickets', 'closed_secs');
+  const reasonTagged = metricFrom('reason_tickets', 'reason_secs');
+  const reasonBlank = metricFrom('blank_tickets', 'blank_secs');
   const reasonCategoryTiming = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
             SUM(CASE WHEN TRIM(COALESCE(reason,'')) != '' THEN 1 ELSE 0 END) AS reason_tickets,
@@ -611,12 +648,14 @@ function getCostCapacityMetrics(opts = {}) {
      FROM parent WHERE LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'${groupSql}
      GROUP BY COALESCE(NULLIF(TRIM(category),''),'Uncategorised'), COALESCE(agroup,''), COALESCE(country,'')`, groupArgs);
   const duplicate = currentStats && currentStats.summary ? currentStats.summary : {};
-  return {
+  const result = {
     available: true,
     scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
     email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, reasonCategoryTiming, milestoneModeWaste, closedIncompleteCategoryRegionInputs, quickBooking,
     tickets: Number(duplicate.total_parents || 0),
   };
+  costCapacityCache.set(cacheKey, result);
+  return result;
 }
 
 // Authoritative category-to-business reference, derived from
@@ -767,10 +806,10 @@ const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'quick_booking_id',
 // 19 columns × 50 rows stays well below SQLite's usual 999 bind-variable
 // limit, while cutting JavaScript → WASM calls by roughly fifty-fold.
 const CSV_INSERT_ROWS = 50;
-// The compact large-file parent row has 22 values. Forty rows keeps each
-// statement below SQLite's conservative 999-variable limit (880 variables)
-// while still batching the JavaScript → WASM boundary efficiently.
-const LARGE_CSV_INSERT_ROWS = 40;
+// The compact large-file parent row has 22 values. Forty-four rows keeps each
+// statement below SQLite's conservative 999-variable limit (968 variables)
+// while reducing JavaScript → WASM calls by another ten percent.
+const LARGE_CSV_INSERT_ROWS = 44;
 
 function canonicalHeader(header) {
   return String(header == null ? '' : header).trim().toLowerCase()
@@ -1985,6 +2024,42 @@ function computeStats(db) {
 
   const one = (sql, ...args) => queryValue(db, sql, args);
   const q = (sql, ...args) => queryAll(db, sql, args);
+
+  // Large-file imports intentionally skip duplicate clustering and fan-out.
+  // Do not spend several seconds recomputing the full duplicate dashboard
+  // statistics that this mode never displays.
+  if (scan.large_dataset_mode) {
+    const totalParents = one('SELECT COUNT(*) FROM parent') || 0;
+    const totalChildren = scan.total_children || 0;
+    const activeGroups = one(`SELECT COUNT(*) FROM (
+      SELECT agroup FROM parent GROUP BY agroup HAVING COUNT(*) >= 20
+    )`) || 0;
+    const stats = {
+      built_at: new Date().toISOString(),
+      summary: {
+        total_parents: totalParents,
+        total_children: totalChildren,
+        active_groups: activeGroups,
+        dup_rows: 0,
+        unique_rows: totalParents,
+        large_dataset_mode: true,
+      },
+      breakdown: { verified: 0, unverified: 0, unique: totalParents },
+      top_subjects: [], patterns: {}, parent_child: {}, child_by_group: [],
+      fanout_teams: [], top_burst: [], by_source: {}, by_group: [],
+      group_touchpoints: [], gap_histogram: [], state_comparison: {},
+      top_email_senders: [], top_mailboxes: [], dup_size_distribution: [],
+      linked_method_counts: scan.linked_methods || { consol: 0, shipment: 0, fulltext: 0 },
+      cross_email_examples: [],
+    };
+    try {
+      runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['stats_json', JSON.stringify(stats)]);
+    } catch (e) {
+      console.warn('Could not cache large-file stats:', e);
+    }
+    updateProgress('Computing statistics', `Large-file summary ready in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    return stats;
+  }
 
   const totalParents = one('SELECT COUNT(*) FROM parent') || 0;
   const totalChildren = scan.total_children || 0;
@@ -3209,26 +3284,107 @@ function emptySummary() {
 // aggregation keeps each shipment-region visit intact, so comparisons between
 // one-process and multi-process flows are not distorted by ticket volume.
 function getShipmentRegionFlowAnalysis() {
-  const items = shipmentItemsFromRows(getShipmentAnalysisRows());
+  const db = getPrimaryDB();
+  const parentColumns = new Set(tableColumns(db, 'parent'));
+  const childColumns = hasTable(db, 'child') ? new Set(tableColumns(db, 'child')) : new Set();
+  const parentHasNaShipmentMarker = parentColumns.has('has_na_shipment_id');
+  const childHasNaShipmentMarker = childColumns.has('has_na_shipment_id');
+  const parentNaShipmentPredicate = parentHasNaShipmentMarker
+    ? 'p.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
+  const childNaShipmentPredicate = childHasNaShipmentMarker
+    ? 'c.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = c.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
+  const childRowsSql = hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+    ? `SELECT csl.sid AS shipment_id, 'child:' || c.number AS ticket_key,
+              c.number, c.opened_ts, '' AS country, c.category,
+              c.time_worked, c.agroup
+       FROM child c JOIN child_ship_link csl ON csl.number = c.number`
+    : `SELECT NULL AS shipment_id, '' AS ticket_key, '' AS number,
+              NULL AS opened_ts, '' AS country, '' AS category,
+              0 AS time_worked, '' AS agroup WHERE 0`;
+  const consolFallbackParentRowsSql = parentNaShipmentPredicate !== '0'
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || p.consol_key AS shipment_id, 'parent:' || p.number AS ticket_key,
+              p.number, p.opened_ts, p.country, p.category, p.time_worked, p.agroup
+       FROM parent p
+       WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
+         AND UPPER(TRIM(p.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
+         AND ${parentNaShipmentPredicate}
+         ${parentHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)'}`
+    : '';
+  const consolFallbackChildRowsSql = childNaShipmentPredicate !== '0' && hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || c.consol_key AS shipment_id, 'child:' || c.number AS ticket_key,
+              c.number, c.opened_ts, '' AS country, c.category, c.time_worked, c.agroup
+       FROM child c
+       WHERE c.consol_key IS NOT NULL AND c.consol_key != ''
+         AND UPPER(TRIM(c.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
+         AND ${childNaShipmentPredicate}
+         ${childHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)'}`
+    : '';
+  // Region analysis needs only chronological shipment legs. Avoid the much
+  // larger general shipment object graph (states, reasons, transition flags,
+  // repeated serialized region context) that made this tab take 8+ seconds.
+  const rows = queryAll(db, `WITH source_rows AS (
+       SELECT sl.sid AS shipment_id, 'parent:' || p.number AS ticket_key,
+              p.number, p.opened_ts, p.country, p.category, p.time_worked, p.agroup
+       FROM parent p JOIN ship_link sl ON sl.number = p.number
+       WHERE sl.sid IS NOT NULL AND sl.sid != ''
+       UNION ALL
+       ${childRowsSql}
+       ${consolFallbackParentRowsSql}
+       ${consolFallbackChildRowsSql}
+     ), shipment_counts AS (
+       SELECT ticket_key, COUNT(DISTINCT shipment_id) AS shipment_count
+       FROM source_rows GROUP BY ticket_key
+     )
+     SELECT sr.shipment_id, sr.number, sr.opened_ts, sr.country, sr.category,
+            sr.agroup, sr.time_worked * 1.0 / sc.shipment_count AS allocated_secs
+     FROM source_rows sr JOIN shipment_counts sc ON sc.ticket_key = sr.ticket_key
+     ORDER BY sr.shipment_id, sr.opened_ts, sr.number`);
   const flows = [];
-  for (const item of items) {
+  let shipmentCount = 0;
+  let shipmentRows = [];
+  let currentShipment = null;
+  const flushShipment = () => {
+    if (!shipmentRows.length) return;
+    shipmentCount++;
+    const candidates = shipmentRows.map((ticket, index) => ({
+      region: regionOf(ticket.agroup),
+      latestTs: Number(ticket.opened_ts) || index,
+    })).filter(({ region }) => region && !['CN', 'EMEA', 'DIVISION', 'Other'].includes(region));
+    const candidateMap = new Map();
+    for (const candidate of candidates) {
+      const entry = candidateMap.get(candidate.region) || { region: candidate.region, count: 0, latestTs: -Infinity };
+      entry.count++;
+      entry.latestTs = Math.max(entry.latestTs, candidate.latestTs);
+      candidateMap.set(candidate.region, entry);
+    }
+    const cnAlternative = [...candidateMap.values()].sort((a, b) =>
+      b.count - a.count || b.latestTs - a.latestTs || a.region.localeCompare(b.region)
+    )[0]?.region || '';
     const byRegion = new Map();
-    for (const ticket of item.tickets) {
+    for (const ticket of shipmentRows) {
       let region = regionOf(ticket.agroup, ticket.country);
-      // Apply the shipment-wide CN refinement to every ticket leg, not only
-      // the latest ticket that labels the existing shipment table.
-      if (region === 'CN') region = shipmentRegionOf(item.tickets, ticket, ticket.region_context);
+      if (region === 'CN' && cnAlternative) region = cnAlternative;
       const process = ticket.category || '(Uncategorised)';
       if (!byRegion.has(region)) byRegion.set(region, {
-        shipment_id: item.shipment_id, region, tickets: 0, total_secs: 0,
+        shipment_id: currentShipment, region, tickets: 0, total_secs: 0,
         process_set: new Set(), process_metrics: new Map(), process_path: [], last_process: '',
       });
       const flow = byRegion.get(region);
       flow.tickets += 1;
-      flow.total_secs += ticket.time_worked || 0;
+      flow.total_secs += ticket.allocated_secs || 0;
       flow.process_set.add(process);
       const processMetric = flow.process_metrics.get(process) || { secs: 0, tickets: 0 };
-      processMetric.secs += ticket.time_worked || 0;
+      processMetric.secs += ticket.allocated_secs || 0;
       processMetric.tickets += 1;
       flow.process_metrics.set(process, processMetric);
       // Preserve the chronological path while collapsing only adjacent repeats.
@@ -3245,7 +3401,16 @@ function getShipmentRegionFlowAnalysis() {
         process_path: flow.process_path.join(' → '),
       });
     }
+    shipmentRows = [];
+  };
+  for (const row of rows) {
+    if (currentShipment !== row.shipment_id) {
+      flushShipment();
+      currentShipment = row.shipment_id;
+    }
+    shipmentRows.push(row);
   }
+  flushShipment();
 
   const regionBuckets = new Map();
   for (const flow of flows) {
@@ -3280,7 +3445,7 @@ function getShipmentRegionFlowAnalysis() {
     };
   }).sort((a, b) => b.all.avg_per_process_secs - a.all.avg_per_process_secs || a.region.localeCompare(b.region));
 
-  return { flows, regions, shipments: items.length };
+  return { flows, regions, shipments: shipmentCount };
 }
 
 // These rankings use shipment-level transition definitions. Sub-categories
@@ -3586,6 +3751,17 @@ const RAW_COLS = [
 
 function getRaw(opts = {}) {
   const db = getPrimaryDB();
+  // Build the large default-sort index only when Raw Data is first opened.
+  // Keeping it out of CSV import shortens time-to-ready, while the one-time
+  // cost remains far below repeatedly sorting all 390k rows in memory.
+  if (!rawSortIndexDBs.has(db)) {
+    runSQL(db, 'CREATE INDEX IF NOT EXISTS idx_p_time_number ON parent(time_worked DESC, number)');
+    rawSortIndexDBs.add(db);
+  }
+  if (rawSummaryCacheDB !== db) {
+    rawSummaryCacheDB = db;
+    rawSummaryCache.clear();
+  }
   const {
     page = 1, perPage = 100, sort = 'hours', dir = 'desc',
     filters = {},
@@ -3615,9 +3791,16 @@ function getRaw(opts = {}) {
   }
   const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
 
-  const total = queryValue(db, `SELECT COUNT(*) FROM parent p ${where}`, args) || 0;
-  const agg = queryOne(db,
-    `SELECT COALESCE(SUM(p.time_worked),0) s, COALESCE(SUM(p.is_dup),0) d FROM parent p ${where}`, args);
+  const summaryKey = JSON.stringify(filters || {});
+  let summary = rawSummaryCache.get(summaryKey);
+  if (!summary) {
+    const agg = queryOne(db, `SELECT COUNT(*) AS total,
+      COALESCE(SUM(p.time_worked),0) AS s, COALESCE(SUM(p.is_dup),0) AS d
+      FROM parent p ${where}`, args) || {};
+    summary = { total: Number(agg.total || 0), s: Number(agg.s || 0), d: Number(agg.d || 0) };
+    rawSummaryCache.set(summaryKey, summary);
+  }
+  const total = summary.total;
   const rows = queryAll(db,
     `SELECT p.*,
             COALESCE((SELECT GROUP_CONCAT(sl.sid, ' · ') FROM ship_link sl WHERE sl.number = p.number), '') AS shipment_ids,
@@ -3641,8 +3824,8 @@ function getRaw(opts = {}) {
 
   return {
     total, page, perPage, sort, dir,
-    sum_hours: +((agg ? agg.s : 0) / 3600).toFixed(1),
-    dup_rows: agg ? agg.d : 0,
+    sum_hours: +(summary.s / 3600).toFixed(1),
+    dup_rows: summary.d,
     columns: RAW_COLS.map(([key, label]) => ({ key, label })),
     items,
   };
@@ -4354,7 +4537,7 @@ async function processLargeCSVFile(file) {
     try {
       await new Promise((resolve, reject) => Papa.parse(file, {
       header: true, skipEmptyLines: true, encoding: 'ISO-8859-1',
-      chunkSize: 8 * 1024 * 1024,
+      chunkSize: 16 * 1024 * 1024,
       chunk(results, parser) {
         parser.pause();
         try {
@@ -4443,7 +4626,8 @@ async function processLargeCSVFile(file) {
       'CREATE INDEX idx_p_cluster ON parent(cluster_id)', 'CREATE INDEX idx_p_consol ON parent(consol_key)',
       'CREATE INDEX idx_p_agroup ON parent(agroup)', 'CREATE INDEX idx_p_dup ON parent(is_dup)',
       'CREATE INDEX idx_p_state ON parent(state)', 'CREATE INDEX idx_p_sd_norm ON parent(sd_norm)',
-      'CREATE INDEX idx_p_haschild ON parent(has_child)', 'CREATE INDEX idx_ship_sid ON ship_link(sid)',
+      'CREATE INDEX idx_p_haschild ON parent(has_child)',
+      'CREATE INDEX idx_ship_sid ON ship_link(sid)',
       'CREATE INDEX idx_child_ship_sid ON child_ship_link(sid)',
       'CREATE INDEX idx_c_consol ON child(consol_key)', 'CREATE INDEX idx_c_agroup ON child(agroup)',
     ]) runSQL(db, s);
@@ -4696,6 +4880,7 @@ function resetAllData() {
   dbEntries = [];
   primaryIdx = 0;
   currentStats = null;
+  clearMilestoneCapacityCache();
   excludedSet.clear();
   saveExcluded();
   processingState = { active: false, phase: '', message: '' };
@@ -4769,6 +4954,7 @@ if (typeof window !== 'undefined') {
   .upload-bar .ver { font-weight: 500; font-size: 0.68rem; color: var(--text3); margin-left: 6px; }
   .upload-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 0.78rem; color: var(--text2); transition: border-color 0.15s; display: flex; align-items: center; gap: 8px; }
   .upload-zone:hover, .upload-zone.drag-over { border-color: var(--blue); color: var(--blue); }
+  .upload-zone.is-processing { border-color: var(--blue); background: #f4f8ff; color: var(--blue); cursor: wait; }
   .upload-zone input { display: none; }
   .file-list { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
   .file-chip { font-size: 0.7rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; display: flex; align-items: center; gap: 6px; }
@@ -4776,7 +4962,8 @@ if (typeof window !== 'undefined') {
   .file-chip .rows { color: var(--text3); font-size: 0.65rem; }
   .file-chip button { border: 0; background: none; cursor: pointer; color: var(--text3); font-size: 0.75rem; padding: 0 2px; }
   .file-chip button:hover { color: var(--red); }
-  .progress-msg { font-size: 0.72rem; color: var(--text3); }
+  .progress-msg { display: inline-flex; align-items: center; gap: 6px; min-width: 150px; font-size: 0.72rem; color: var(--text3); }
+  .progress-msg.busy::before { content: ''; width: 11px; height: 11px; flex: 0 0 11px; border: 2px solid #cbd8ef; border-top-color: var(--blue); border-radius: 50%; animation: snow-spin .75s linear infinite; }
   .progress-msg.error { color: var(--red); }
   .reset-btn { font-size: 0.7rem; padding: 5px 10px; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; color: var(--text2); }
   .reset-btn:hover { border-color: var(--red); color: var(--red); }
@@ -4916,6 +5103,7 @@ if (typeof window !== 'undefined') {
   .tabs { display: flex; padding: 8px 12px 0; gap: 4px; }
   .tab { padding: 6px 14px; border: 1px solid var(--border); background: #fff; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.8rem; border-bottom: none; }
   .tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .tab.is-loading::after, .dash-tab.is-loading::after { content: ''; display: inline-block; width: 8px; height: 8px; margin-left: 7px; border: 1.5px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: snow-spin .75s linear infinite; }
   .sidebar-nav { flex-direction: column; padding: 12px; gap: 7px; }
   .sidebar-nav .tab { width: 100%; padding: 9px 11px; border-radius: 6px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 600; }
   .sidebar-nav .tab:hover { border-color: var(--blue); color: var(--blue); }
@@ -5023,6 +5211,17 @@ if (typeof window !== 'undefined') {
   .badge.internal { background: #e8f0fe; color: #3b71ca; }
   .badge.external { background: #fef7e0; color: #b8860b; }
   .loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--text3); }
+  .view-loading { min-height: 240px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .view-loading-inner { width: min(430px, 80%); text-align: center; }
+  .view-loading-title { color: var(--text2); font-size: .82rem; font-weight: 700; }
+  .view-loading-note { margin-top: 3px; color: var(--text3); font-size: .7rem; }
+  .view-loading-track { height: 4px; margin-top: 13px; overflow: hidden; border-radius: 99px; background: #e7edf6; }
+  .view-loading-track::after { content: ''; display: block; width: 42%; height: 100%; border-radius: inherit; background: var(--blue); animation: snow-load 1.1s ease-in-out infinite; }
+  @keyframes snow-spin { to { transform: rotate(360deg); } }
+  @keyframes snow-load { from { transform: translateX(-120%); } to { transform: translateX(340%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .progress-msg.busy::before, .tab.is-loading::after, .dash-tab.is-loading::after, .view-loading-track::after { animation: none; }
+  }
 
   .dash-view { display: none; }
   .dash-view.active { display: block; }
@@ -5219,7 +5418,7 @@ if (typeof window !== 'undefined') {
   </label>
   <span style="font-size:0.68rem;color:var(--text3)">For multi-GB exports, load a prepared .db when available.</span>
   <div class="file-list" id="fileList"></div>
-  <span class="progress-msg" id="progressMsg"></span>
+  <span class="progress-msg" id="progressMsg" role="status" aria-live="polite"></span>
   <button class="reset-btn sidebar-toggle" type="button" id="sidebarToggle" style="display:none"
           aria-controls="sidebar" aria-expanded="true" onclick="toggleSidebar()">☰ Hide sidebar</button>
   <button class="reset-btn" onclick="window.App.exportDatabase()" id="downloadBtn" style="display:none" title="Download processed .db file">&#128190; Download DB</button>
@@ -5314,7 +5513,11 @@ fileInput.addEventListener('change', () => {
 
 window._onProgress = function(phase, message) {
   progressEl.textContent = `${phase}: ${message}`;
-  progressEl.classList.remove('error');
+  const finished = phase === 'Ready' || phase === 'Error';
+  progressEl.classList.toggle('busy', !finished);
+  progressEl.classList.toggle('error', phase === 'Error');
+  uploadZone.classList.toggle('is-processing', !finished);
+  uploadZone.setAttribute('aria-busy', String(!finished));
 };
 
 async function handleFiles(files) {
@@ -5377,6 +5580,9 @@ async function handleFiles(files) {
     // Never leave the UI wedged on "processing" — a thrown error above
     // (e.g. a wasm memory failure) must not block future uploads
     processing = false;
+    uploadZone.classList.remove('is-processing');
+    uploadZone.setAttribute('aria-busy', 'false');
+    progressEl.classList.remove('busy');
   }
 }
 
@@ -5402,13 +5608,16 @@ function onDataReady() {
   setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
   resetBtn.style.display = 'inline-block';
   document.getElementById('downloadBtn').style.display = 'inline-block';
-  // Open the primary management view as soon as the uploaded data is ready.
-  switchTab('dashboard');
   // Re-render the dashboard if it was already opened (data may have changed
   // after a multi-file merge)
   dashLoaded = false;
   dashboardRenderedRevision = -1;
+  capacityLoaded = false;
   rawLoaded = false;
+  document.getElementById('dashContent').innerHTML = '';
+  document.getElementById('capacityContent').innerHTML = '';
+  document.getElementById('rawContent').innerHTML = '';
+  clearMilestoneCapacityCache();
   assigneeCacheKey = null; // data changed — force stats refresh
   e1Data = [];
   blData = [];
@@ -5425,6 +5634,8 @@ function onDataReady() {
   reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   modeState.mode = 'all';
+  // Open the primary management view only after every cache has been reset.
+  switchTab('dashboard');
 }
 
 function resetAll() {
@@ -5456,7 +5667,9 @@ function resetAll() {
   closedIncompleteCategorySort.key = 'secs'; closedIncompleteCategorySort.dir = 'desc';
   currentPage = 1; currentGroups = []; dashLoaded = false;
   dashboardRenderedRevision = -1;
+  capacityLoaded = false;
   rawLoaded = false;
+  tabRenderPending.clear();
   assigneeCacheKey = null; assigneeCache = null;
   rawCols = null;
   localExcluded.clear(); saveLocal();
@@ -5684,6 +5897,35 @@ function renderCapacity() {
 }
 
 const TABS = ['dashboard', 'capacity', 'raw'];
+const tabRenderPending = new Set();
+const viewLoadingMarkup = (title, note) => '<div class="view-loading" role="status" aria-live="polite"><div class="view-loading-inner"><div class="view-loading-title">' + title + '</div><div class="view-loading-note">' + note + '</div><div class="view-loading-track" aria-hidden="true"></div></div></div>';
+function queueTabRender(tab, hostId, title, note, work) {
+  if (tabRenderPending.has(tab)) return;
+  tabRenderPending.add(tab);
+  const host = document.getElementById(hostId);
+  const button = document.querySelector('.sidebar-nav .tab[data-tab="' + tab + '"]');
+  if (host) host.innerHTML = viewLoadingMarkup(title, note);
+  if (button) {
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+  }
+  // Yield one paint so the selected tab and progress state appear before a
+  // large SQL query or table render occupies the main thread.
+  requestAnimationFrame(() => window.setTimeout(async () => {
+    try {
+      await work();
+    } catch (error) {
+      console.error('Could not render ' + tab + ':', error);
+      if (host) host.innerHTML = '<div class="view-loading"><div class="view-loading-inner"><div class="view-loading-title">This view could not be prepared</div><div class="view-loading-note">' + escHTML(error && error.message ? error.message : String(error)) + '</div></div></div>';
+    } finally {
+      tabRenderPending.delete(tab);
+      if (button) {
+        button.classList.remove('is-loading');
+        button.setAttribute('aria-busy', 'false');
+      }
+    }
+  }, 0));
+}
 function switchTab(tab) {
   if (!TABS.includes(tab)) tab = 'dashboard';
   document.querySelectorAll('.sidebar-nav .tab').forEach(t =>
@@ -5692,7 +5934,7 @@ function switchTab(tab) {
   document.getElementById('capacityView').classList.toggle('active', tab === 'capacity');
   document.getElementById('rawView').classList.toggle('active', tab === 'raw');
   if (tab === 'dashboard') {
-    if (!dashLoaded) loadDashboard();
+    if (!dashLoaded) queueTabRender('dashboard', 'dashContent', 'Preparing dashboard', 'Building the management summary from the uploaded data.', loadDashboard);
     else if (dashboardRenderedRevision !== dashboardFilterRevision) refreshDashboard();
     else requestAnimationFrame(() => {
       // Returning to an unchanged dashboard should be a paint/resize, not a
@@ -5704,13 +5946,16 @@ function switchTab(tab) {
       });
     });
   }
-  if (tab === 'capacity') renderCapacity();
-  if (tab === 'raw' && !rawLoaded) loadRaw();
+  if (tab === 'capacity' && !capacityLoaded) queueTabRender('capacity', 'capacityContent', 'Calculating cost and capacity', 'Applying the CSV formulas and preparing the audit tables.', renderCapacity);
+  if (tab === 'raw' && !rawLoaded) queueTabRender('raw', 'rawContent', 'Preparing raw data', 'Indexing and retrieving the first page of tickets.', loadRaw);
 }
 
 function markDashboardDirty() {
   dashboardFilterRevision++;
-  if (capacityLoaded && document.getElementById('capacityView').classList.contains('active')) renderCapacity();
+  capacityLoaded = false;
+  if (document.getElementById('capacityView').classList.contains('active')) {
+    queueTabRender('capacity', 'capacityContent', 'Updating cost and capacity', 'Applying the selected team scope.', renderCapacity);
+  }
 }
 
 async function loadGroups() {
@@ -8608,6 +8853,37 @@ function renderReasonAnalysis() {
   }));
 }
 
+function queueDashboardSection(page, root, lazyKey, title, note, work) {
+  if (!root || root.dataset[lazyKey] !== 'true') return;
+  root.dataset[lazyKey] = 'loading';
+  root.innerHTML = viewLoadingMarkup(title, note);
+  const button = document.querySelector('#dashContent .dash-tab[data-page="' + page + '"]');
+  if (button) {
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+  }
+  requestAnimationFrame(() => window.setTimeout(() => {
+    try {
+      work();
+      root.dataset[lazyKey] = 'loaded';
+    } catch (error) {
+      console.error('Could not render dashboard section ' + page + ':', error);
+      root.dataset[lazyKey] = 'error';
+      root.innerHTML = '<div class="view-loading"><div class="view-loading-inner"><div class="view-loading-title">This analysis could not be prepared</div><div class="view-loading-note">' + escHTML(error && error.message ? error.message : String(error)) + '</div></div></div>';
+    } finally {
+      if (button) {
+        button.classList.remove('is-loading');
+        button.setAttribute('aria-busy', 'false');
+      }
+      const active = document.querySelector('#dashContent .dash-page.active');
+      if (active) active.querySelectorAll('canvas').forEach(canvas => {
+        const chart = Chart.getChart(canvas);
+        if (chart) chart.resize();
+      });
+    }
+  }, 0));
+}
+
 function dashTab(page) {
   document.querySelectorAll('#dashContent .dash-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.page === page));
@@ -8620,20 +8896,17 @@ function dashTab(page) {
     if (c) c.resize();
   });
   const shipmentRoot = document.getElementById('quickBookingSection');
-  if (page === 'quick-booking' && shipmentRoot && shipmentRoot.dataset.lazyShipment === 'true') {
-    shipmentRoot.dataset.lazyShipment = 'loaded';
-    renderQuickBookingSection();
-  }
+  if (page === 'quick-booking') queueDashboardSection(
+    page, shipmentRoot, 'lazyShipment', 'Preparing Shipment Analysis',
+    'Loading shipment-linked work only for this view.', renderQuickBookingSection);
   const shipmentRegionRoot = document.getElementById('shipmentRegionSection');
-  if (page === 'shipment-region' && shipmentRegionRoot && shipmentRegionRoot.dataset.lazyShipmentRegion === 'true') {
-    shipmentRegionRoot.dataset.lazyShipmentRegion = 'loaded';
-    renderShipmentRegionSection();
-  }
+  if (page === 'shipment-region') queueDashboardSection(
+    page, shipmentRegionRoot, 'lazyShipmentRegion', 'Preparing Shipment and Region',
+    'Building regional process flows from Shipment IDs.', renderShipmentRegionSection);
   const reasonRoot = document.getElementById('reasonAnalysisSection');
-  if (page === 'reason-time' && reasonRoot && reasonRoot.dataset.lazyReasonAnalysis === 'true') {
-    reasonRoot.dataset.lazyReasonAnalysis = 'loaded';
-    renderReasonAnalysis();
-  }
+  if (page === 'reason-time') queueDashboardSection(
+    page, reasonRoot, 'lazyReasonAnalysis', 'Preparing Reason Analysis and Time',
+    'Comparing reason-tagged and untagged tickets by category.', renderReasonAnalysis);
   // render the quadrant lazily the first time the categories page is opened
   if (page === 'categories' && !quadRendered) {
     renderQuadrant();
