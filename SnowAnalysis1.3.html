@@ -182,7 +182,10 @@ function splitShipmentIds(raw) {
       ids.push(sid);
     }
   }
-  return ids;
+  // A few exports repeat the same Shipment ID inside one multi-value cell.
+  // One ticket may link to a shipment only once; retaining duplicates inflates
+  // its ticket count and changes allocated time in streaming/large-file mode.
+  return [...new Set(ids)];
 }
 
 // Quick Booking IDs group tickets that do not have a valid Shipment ID, but
@@ -472,6 +475,10 @@ const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'quick_booking_id',
 // 17 columns × 50 rows stays well below SQLite's usual 999 bind-variable
 // limit, while cutting JavaScript → WASM calls by roughly fifty-fold.
 const CSV_INSERT_ROWS = 50;
+// The compact large-file parent row has 21 values. Forty rows keeps each
+// statement below SQLite's conservative 999-variable limit (840 variables)
+// while still batching the JavaScript → WASM boundary efficiently.
+const LARGE_CSV_INSERT_ROWS = 40;
 
 function canonicalHeader(header) {
   return String(header == null ? '' : header).trim().toLowerCase()
@@ -2591,10 +2598,14 @@ function getCategoryStats(groups = []) {
 // reassign the entire job's effort to that single scope.
 let shipmentAnalysisRowsCache = new Map();
 let shipmentAnalysisRowsCacheDB = null;
+let shipmentAnalysisRowsCacheRowCount = 0;
+const SHIPMENT_ANALYSIS_CACHE_MAX_ENTRIES = 4;
+const SHIPMENT_ANALYSIS_CACHE_MAX_ROWS = 200000;
 
 function clearShipmentAnalysisRowsCache() {
   shipmentAnalysisRowsCache = new Map();
   shipmentAnalysisRowsCacheDB = null;
+  shipmentAnalysisRowsCacheRowCount = 0;
 }
 
 function getShipmentAnalysisRows(filters = {}) {
@@ -2604,13 +2615,21 @@ function getShipmentAnalysisRows(filters = {}) {
   if (shipmentAnalysisRowsCacheDB !== db) {
     shipmentAnalysisRowsCache.clear();
     shipmentAnalysisRowsCacheDB = db;
+    shipmentAnalysisRowsCacheRowCount = 0;
   }
   const cacheKey = JSON.stringify({
     category: filters.category || '',
     sub_category: filters.sub_category || '',
     agroup: filters.agroup || '',
   });
-  if (shipmentAnalysisRowsCache.has(cacheKey)) return shipmentAnalysisRowsCache.get(cacheKey);
+  if (shipmentAnalysisRowsCache.has(cacheKey)) {
+    // Refresh recency so the broad/current scopes survive ahead of abandoned
+    // selector combinations.
+    const cached = shipmentAnalysisRowsCache.get(cacheKey);
+    shipmentAnalysisRowsCache.delete(cacheKey);
+    shipmentAnalysisRowsCache.set(cacheKey, cached);
+    return cached;
+  }
   const clauses = [];
   const args = [];
   if (filters.category) { clauses.push('category = ?'); args.push(filters.category); }
@@ -2707,7 +2726,19 @@ function getShipmentAnalysisRows(filters = {}) {
      JOIN shipment_counts sc ON sc.ticket_key = fr.ticket_key
      LEFT JOIN region_context rc ON rc.shipment_id = fr.shipment_id
      ORDER BY fr.shipment_id, fr.opened_ts, fr.number`, args);
+  // Shipment rows are plain JavaScript objects copied out of WASM. Bound this
+  // cache by both scopes and total rows so category exploration cannot grow
+  // memory indefinitely and eventually crash tab switching.
+  while (shipmentAnalysisRowsCache.size &&
+      (shipmentAnalysisRowsCache.size >= SHIPMENT_ANALYSIS_CACHE_MAX_ENTRIES ||
+       shipmentAnalysisRowsCacheRowCount + rows.length > SHIPMENT_ANALYSIS_CACHE_MAX_ROWS)) {
+    const oldestKey = shipmentAnalysisRowsCache.keys().next().value;
+    const oldestRows = shipmentAnalysisRowsCache.get(oldestKey);
+    shipmentAnalysisRowsCache.delete(oldestKey);
+    shipmentAnalysisRowsCacheRowCount -= oldestRows.length;
+  }
   shipmentAnalysisRowsCache.set(cacheKey, rows);
+  shipmentAnalysisRowsCacheRowCount += rows.length;
   return rows;
 }
 
@@ -3972,13 +4003,49 @@ async function processLargeCSVFile(file) {
   const entry = { db, name: file.name, filename: file.name, largeDataset: true, _rowsImported: 0 };
   dbEntries.push(entry);
   try {
+    // This database exists only in memory while it is being assembled. Avoid
+    // journalling and sync work that cannot improve recovery for a failed
+    // browser import (the incomplete database is discarded in the catch).
+    runSQL(db, 'PRAGMA journal_mode=OFF');
+    runSQL(db, 'PRAGMA synchronous=OFF');
+    runSQL(db, 'PRAGMA temp_store=MEMORY');
+    runSQL(db, 'PRAGMA locking_mode=EXCLUSIVE');
     for (const t of ['parent', 'child', 'dup_group', 'dup_group_agroup',
                      'dup_group_source', 'dup_cluster', 'ship_link', 'child_ship_link', 'meta',
                      'consol_fanout']) runSQL(db, `DROP TABLE IF EXISTS ${t}`);
     runSQL(db, PARENT_DDL); runSQL(db, SHIP_LINK_DDL); runSQL(db, CHILD_SHIP_LINK_DDL); runSQL(db, META_DDL);
     runSQL(db, DUP_CLUSTER_DDL); runSQL(db, CHILD_DDL); runSQL(db, EXCLUDED_DDL);
 
-    await new Promise((resolve, reject) => Papa.parse(file, {
+    // Reuse prepared statements across parser chunks. Previously every
+    // 40/50-row batch compiled and freed four SQL statements, resulting in
+    // thousands of avoidable WASM compiles on a large export.
+    const insertStatements = {
+      parent: new Map(), child: new Map(), ship: new Map(), childShip: new Map(),
+    };
+    // The normal importer keeps the first row for a ticket number. Apply the
+    // same rule before creating any compact-table links; otherwise a duplicate
+    // row can be ignored by parent/child yet still add a second shipment link.
+    const seenTicketNumbers = new Set();
+    const statementFor = (cache, count, sql) => {
+      let stmt = cache.get(count);
+      if (!stmt) {
+        stmt = db.prepare(sql);
+        cache.set(count, stmt);
+      }
+      return stmt;
+    };
+    const freeInsertStatements = () => {
+      for (const cache of Object.values(insertStatements)) {
+        for (const stmt of cache.values()) {
+          try { stmt.free(); } catch (_) { /* already released */ }
+        }
+        cache.clear();
+      }
+      seenTicketNumbers.clear();
+    };
+
+    try {
+      await new Promise((resolve, reject) => Papa.parse(file, {
       header: true, skipEmptyLines: true, encoding: 'ISO-8859-1',
       chunkSize: 8 * 1024 * 1024,
       chunk(results, parser) {
@@ -4000,19 +4067,24 @@ async function processLargeCSVFile(file) {
             const value = field(key) ? row[field(key)] : '';
             return value == null ? '' : String(value);
           };
-          const parentStmtFor = n => db.prepare(`INSERT OR IGNORE INTO parent
+          const parentStmtFor = n => statementFor(insertStatements.parent, n, `INSERT OR IGNORE INTO parent
             (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id,has_na_shipment_id)
             VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
-          const childStmtFor = n => db.prepare(`INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
-          const shipStmtFor = n => db.prepare(`INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
-          const childShipStmtFor = n => db.prepare(`INSERT INTO child_ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
+          const childStmtFor = n => statementFor(insertStatements.child, n,
+            `INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+          const shipStmtFor = n => statementFor(insertStatements.ship, n,
+            `INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
+          const childShipStmtFor = n => statementFor(insertStatements.childShip, n,
+            `INSERT INTO child_ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           runSQL(db, 'BEGIN IMMEDIATE');
           try {
-            for (let start = 0; start < results.data.length; start += CSV_INSERT_ROWS) {
+            for (let start = 0; start < results.data.length; start += LARGE_CSV_INSERT_ROWS) {
               const parents = [], children = [], ships = [], childShips = [];
-              for (const row of results.data.slice(start, start + CSV_INSERT_ROWS)) {
+              for (const row of results.data.slice(start, start + LARGE_CSV_INSERT_ROWS)) {
                 let number = read(row, 'number').trim();
                 if (!number) number = generatedIdentifier(entry);
+                if (seenTicketNumbers.has(number)) continue;
+                seenTicketNumbers.add(number);
                 const source = norm(read(row, 'open_from'));
                 const openedAt = read(row, 'opened_at').trim();
                 const openedTs = parseCsvDate(openedAt);
@@ -4037,10 +4109,10 @@ async function processLargeCSVFile(file) {
                   norm(read(row, 'reason')), norm(read(row, 'quick_booking_id')), shipmentKeys.length ? 1 : 0, missingShipmentIsNa ? 1 : 0);
                 for (const sid of shipmentKeys) ships.push(sid, number);
               }
-              if (parents.length) { const stmt = parentStmtFor(parents.length / 21); stmt.run(parents); stmt.free(); }
-              if (children.length) { const stmt = childStmtFor(children.length / 13); stmt.run(children); stmt.free(); }
-              if (ships.length) { const stmt = shipStmtFor(ships.length / 2); stmt.run(ships); stmt.free(); }
-              if (childShips.length) { const stmt = childShipStmtFor(childShips.length / 2); stmt.run(childShips); stmt.free(); }
+              if (parents.length) parentStmtFor(parents.length / 21).run(parents);
+              if (children.length) childStmtFor(children.length / 13).run(children);
+              if (ships.length) shipStmtFor(ships.length / 2).run(ships);
+              if (childShips.length) childShipStmtFor(childShips.length / 2).run(childShips);
             }
             runSQL(db, 'COMMIT');
           } catch (error) {
@@ -4053,7 +4125,10 @@ async function processLargeCSVFile(file) {
         } catch (error) { parser.abort(); reject(error); }
       },
       complete() { resolve(); }, error: reject,
-    }));
+      }));
+    } finally {
+      freeInsertStatements();
+    }
 
     updateProgress('Large-file mode', 'Finalizing shipment indexes...');
     runSQL(db, 'ALTER TABLE parent ADD COLUMN has_child INTEGER DEFAULT 0');
@@ -4774,7 +4849,7 @@ if (typeof window !== 'undefined') {
 
 <!-- ═══ Upload Bar ═══ -->
 <div class="upload-bar" id="uploadBar">
-  <span class="brand">&#128269; Snow Duplicate Analysis <span class="ver" id="buildVer">v2026.08.04-single</span></span>
+  <span class="brand">&#128269; Snow Duplicate Analysis <span class="ver" id="buildVer">v2026.08.25-single</span></span>
   <label class="upload-zone" id="uploadZone">
     <span id="uploadLabel">&#128194; Drop CSV or .db file here (or click to browse)</span>
     <input type="file" id="fileInput" accept=".csv,.db,.sqlite,.sqlite3" multiple>
@@ -5016,6 +5091,8 @@ function onDataReady() {
   // Re-render the dashboard if it was already opened (data may have changed
   // after a multi-file merge)
   dashLoaded = false;
+  dashboardRenderedRevision = -1;
+  rawLoaded = false;
   assigneeCacheKey = null; // data changed — force stats refresh
   e1Data = [];
   blData = [];
@@ -5028,6 +5105,8 @@ function onDataReady() {
   shipmentAnalysisOptions = null;
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
+  quickBookingNoShipmentAnalysisCache.clear();
+  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   modeState.mode = 'all';
   loadGroups();
@@ -5058,17 +5137,16 @@ function resetAll() {
   shipmentAnalysisOptions = null;
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
+  quickBookingNoShipmentAnalysisCache.clear();
+  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   currentPage = 1; currentGroups = []; dashLoaded = false;
+  dashboardRenderedRevision = -1;
+  rawLoaded = false;
   assigneeCacheKey = null; assigneeCache = null;
   rawCols = null;
   localExcluded.clear(); saveLocal();
-  charts.forEach(c => c.destroy());
-  charts.length = 0;
-  sectionCharts.forEach(c => { try { c.destroy(); } catch (e) {} });
-  sectionCharts.length = 0;
-  assigneeCharts.forEach(c => c.destroy());
-  assigneeCharts = [];
+  destroyDashboardCharts();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5076,6 +5154,8 @@ function resetAll() {
 // ═══════════════════════════════════════════════════════════════════
 
 let currentPage = 1, dashLoaded = false;
+let dashboardFilterRevision = 0, dashboardRenderedRevision = -1;
+let rawLoaded = false;
 let currentGroups = [];
 const PER_PAGE = 50;
 const charts = [];          // overview charts built once per dashboard render (mk)
@@ -5092,11 +5172,23 @@ function switchTab(tab) {
   document.getElementById('dashView').classList.toggle('active', tab === 'dashboard');
   document.getElementById('rawView').classList.toggle('active', tab === 'raw');
   if (tab === 'dashboard') {
-    // Already rendered? Refresh every section — sidebar team selections made
-    // while on another tab change the group-filtered data behind the whole tab
-    if (dashLoaded) refreshDashboard(); else loadDashboard();
+    if (!dashLoaded) loadDashboard();
+    else if (dashboardRenderedRevision !== dashboardFilterRevision) refreshDashboard();
+    else requestAnimationFrame(() => {
+      // Returning to an unchanged dashboard should be a paint/resize, not a
+      // full SQL + DOM rebuild. Hidden Chart.js canvases occasionally need a
+      // resize after becoming visible again.
+      document.querySelectorAll('#dashContent .dash-page.active canvas').forEach(canvas => {
+        const chart = Chart.getChart(canvas);
+        if (chart) chart.resize();
+      });
+    });
   }
-  if (tab === 'raw') loadRaw();
+  if (tab === 'raw' && !rawLoaded) loadRaw();
+}
+
+function markDashboardDirty() {
+  dashboardFilterRevision++;
 }
 
 async function loadGroups() {
@@ -5147,6 +5239,7 @@ function toggleGroup(g) {
   if (i >= 0) currentGroups.splice(i, 1); else currentGroups.push(g);
   renderGroupFilter();
   loadDupList(1);
+  markDashboardDirty();
   // Every dashboard section is filtered by currentGroups — refresh when on screen
   if (dashLoaded && document.getElementById('dashView').classList.contains('active')) {
     refreshDashboard();
@@ -5239,6 +5332,7 @@ function clearFilters() {
   renderGroupFilter();
   renderAssigneeFilter();
   loadDupList(1);
+  markDashboardDirty();
   if (dashLoaded && document.getElementById('dashView').classList.contains('active')) {
     refreshDashboard();
   }
@@ -5431,6 +5525,8 @@ async function loadRaw(resetPage) {
       }).join('') + '</tr>').join('')
         : '<tr><td colspan="' + d.columns.length + '">No rows match these filters</td></tr>') +
     '</tbody></table></div>';
+
+  rawLoaded = true;
 
   if (focus && focus.key) {
     const again = el.querySelector('.frow input[data-k="' + focus.key + '"]');
@@ -6060,6 +6156,14 @@ const shipmentThresholdOverlayPlugin = {
 };
 const descriptionMatchedAnalysisCache = new Map();
 const quickBookingNoShipmentAnalysisCache = new Map();
+const SHIPMENT_UI_CACHE_MAX_ENTRIES = 4;
+
+function setBoundedCache(cache, key, value, maxEntries = SHIPMENT_UI_CACHE_MAX_ENTRIES) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+  return value;
+}
 const QUICK_BOOKING_COLS = [
   { key: 'region', label: 'Region', num: false },
   { key: 'assignment_group', label: 'Assignment Group', num: false },
@@ -6602,13 +6706,13 @@ function renderQuickBookingSection() {
   const data = window.App.getQuickBookingShipmentAnalysis(analysis);
   const noShipmentKey = JSON.stringify(analysis);
   if (!quickBookingNoShipmentAnalysisCache.has(noShipmentKey)) {
-    quickBookingNoShipmentAnalysisCache.set(noShipmentKey,
+    setBoundedCache(quickBookingNoShipmentAnalysisCache, noShipmentKey,
       window.App.getQuickBookingNoShipmentAnalysis(analysis));
   }
   const noShipmentData = quickBookingNoShipmentAnalysisCache.get(noShipmentKey);
   const descriptionMatchKey = JSON.stringify(analysis);
   if (!descriptionMatchedAnalysisCache.has(descriptionMatchKey)) {
-    descriptionMatchedAnalysisCache.set(descriptionMatchKey,
+    setBoundedCache(descriptionMatchedAnalysisCache, descriptionMatchKey,
       window.App.getDescriptionMatchedShipmentAnalysis(analysis));
   }
   const descriptionMatchedData = descriptionMatchedAnalysisCache.get(descriptionMatchKey);
@@ -9686,10 +9790,44 @@ window.filterByGroup = function(g) {
 // Re-render every dashboard section after the team filter changes:
 // drop the lazily-populated data caches and recreate all charts so no
 // section keeps showing stale (unfiltered) numbers
+function destroyDashboardCharts() {
+  // Some section charts also appear in sectionCharts. A Set prevents a second
+  // destroy call while still covering charts held only by a dedicated ref.
+  const all = new Set([
+    ...charts, ...sectionCharts, ...assigneeCharts, ...reasonAnalysisCharts,
+    shipmentDistributionChart, milestoneTicketDistributionChart,
+    quickBookingTeamAllocationChart, shipmentRegionFlowChart,
+    shipmentRegionAverageTimeChart, quadChart, e1simChart,
+  ].filter(Boolean));
+  for (const chart of all) {
+    try { chart.destroy(); } catch (_) { /* detached or already destroyed */ }
+  }
+  charts.length = 0;
+  sectionCharts.length = 0;
+  assigneeCharts = [];
+  reasonAnalysisCharts = [];
+  shipmentDistributionChart = null;
+  milestoneTicketDistributionChart = null;
+  quickBookingTeamAllocationChart = null;
+  shipmentRegionFlowChart = null;
+  shipmentRegionAverageTimeChart = null;
+  quadChart = null;
+  e1simChart = null;
+  quadRendered = false;
+}
+
 function refreshDashboard() {
   if (!dashLoaded) return;
   if (currentStats?.summary?.large_dataset_mode) {
-    renderLargeFileDashboard(currentStats);
+    // The large-file overview is static. Refresh only expensive sections that
+    // the user actually opened, preserving the active internal tab and DOM.
+    const reasonRoot = document.getElementById('reasonAnalysisSection');
+    if (reasonRoot?.dataset.lazyReasonAnalysis === 'loaded') renderReasonAnalysis();
+    const shipmentRoot = document.getElementById('quickBookingSection');
+    if (shipmentRoot?.dataset.lazyShipment === 'loaded') renderQuickBookingSection();
+    const shipmentRegionRoot = document.getElementById('shipmentRegionSection');
+    if (shipmentRegionRoot?.dataset.lazyShipmentRegion === 'loaded') renderShipmentRegionSection();
+    dashboardRenderedRevision = dashboardFilterRevision;
     return;
   }
   e1Data = []; gsmData = []; e1regData = []; modeData = null;
@@ -9709,6 +9847,9 @@ function refreshDashboard() {
   renderE1Regions();
   renderModeAnalysis();
   renderFanout();
+  const reasonRoot = document.getElementById('reasonAnalysisSection');
+  if (reasonRoot?.dataset.lazyReasonAnalysis === 'loaded') renderReasonAnalysis();
+  dashboardRenderedRevision = dashboardFilterRevision;
 }
 
 // ── Consol-level fan-out table (v9) ──
@@ -9771,6 +9912,7 @@ async function loadDashboard() {
   }
   renderDashboard(data);
   dashLoaded = true;
+  dashboardRenderedRevision = dashboardFilterRevision;
 }
 
 // A 150k+ row file is intentionally imported without the duplicate/fan-out
@@ -9780,10 +9922,7 @@ function renderLargeFileDashboard(data) {
   const s = data.summary;
   const root = document.getElementById('dashContent');
   if (!root) return;
-  charts.forEach(chart => { try { chart.destroy(); } catch (_) {} });
-  charts.length = 0;
-  sectionCharts.forEach(chart => { try { chart.destroy(); } catch (_) {} });
-  sectionCharts.length = 0;
+  destroyDashboardCharts();
   root.innerHTML = '<div class="dash-tabs">' +
     '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
     '<button class="dash-tab" data-page="reason-time" onclick="dashTab(\'reason-time\')">Reason Analysis and Time</button>' +
@@ -9814,6 +9953,7 @@ function renderDashboard(data) {
     renderLargeFileDashboard(data);
     return;
   }
+  destroyDashboardCharts();
   const C = { blue:'#3b71ca', amber:'#e6a817', red:'#dc3545', green:'#1e8a4c', purple:'#7c3aed', teal:'#0d9488', orange:'#f97316', gray2:'#adb5bd' };
   const C8 = [C.blue, C.amber, C.red, C.green, C.purple, C.teal, C.orange, '#6366f1'];
 
