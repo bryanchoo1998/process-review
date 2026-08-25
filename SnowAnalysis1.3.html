@@ -595,6 +595,14 @@ function getCostCapacityMetrics(opts = {}) {
   const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
   const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
   const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
+  const reasonCategoryTiming = queryAll(db,
+    `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
+            SUM(CASE WHEN TRIM(COALESCE(reason,'')) != '' THEN 1 ELSE 0 END) AS reason_tickets,
+            COALESCE(SUM(CASE WHEN TRIM(COALESCE(reason,'')) != '' THEN time_worked ELSE 0 END),0) AS reason_secs,
+            SUM(CASE WHEN TRIM(COALESCE(reason,'')) = '' THEN 1 ELSE 0 END) AS blank_tickets,
+            COALESCE(SUM(CASE WHEN TRIM(COALESCE(reason,'')) = '' THEN time_worked ELSE 0 END),0) AS blank_secs
+       FROM parent WHERE 1=1${groupSql}
+       GROUP BY COALESCE(NULLIF(TRIM(category),''),'Uncategorised')`, groupArgs);
   const milestoneModeWaste = getMilestoneShipmentModeWaste(groups);
   const closedIncompleteCategoryRegionInputs = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
@@ -606,7 +614,7 @@ function getCostCapacityMetrics(opts = {}) {
   return {
     available: true,
     scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
-    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, milestoneModeWaste, closedIncompleteCategoryRegionInputs, quickBooking,
+    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, reasonCategoryTiming, milestoneModeWaste, closedIncompleteCategoryRegionInputs, quickBooking,
     tickets: Number(duplicate.total_parents || 0),
   };
 }
@@ -5563,10 +5571,18 @@ function renderCapacity() {
   const invoiceHours = capHours(data.invoicing.secs);
   const reportHours = Math.max(0, capacitySettings.reportVolume) * Math.max(0, capacitySettings.reportMinutes) / 60;
   const afterShiftHours = Math.max(0, capacitySettings.afterShiftHours);
-  const reasonTaggedAvgMin = Number(data.reasonTagged.tickets || 0) ? Number(data.reasonTagged.secs || 0) / Number(data.reasonTagged.tickets || 0) / 60 : 0;
-  const reasonBlankAvgMin = Number(data.reasonBlank.tickets || 0) ? Number(data.reasonBlank.secs || 0) / Number(data.reasonBlank.tickets || 0) / 60 : 0;
-  const reasonDifferenceMin = reasonTaggedAvgMin - reasonBlankAvgMin;
-  const reasonImpactHours = Number(data.reasonTagged.tickets || 0) * reasonDifferenceMin / 60;
+  const reasonMatchedRows = (data.reasonCategoryTiming || []).filter(row => Number(row.reason_tickets || 0) > 0 && Number(row.blank_tickets || 0) > 0).map(row => {
+    const reasonTickets = Number(row.reason_tickets || 0);
+    const blankTickets = Number(row.blank_tickets || 0);
+    const gapSecs = Number(row.reason_secs || 0) / reasonTickets - Number(row.blank_secs || 0) / blankTickets;
+    return { ...row, reasonTickets, blankTickets, gapSecs, impactSecs: reasonTickets * gapSecs };
+  });
+  const matchedReasonTickets = reasonMatchedRows.reduce((sum, row) => sum + row.reasonTickets, 0);
+  const unmatchedReasonTickets = Math.max(0, Number(data.reasonTagged.tickets || 0) - matchedReasonTickets);
+  const reasonNegativeCategories = reasonMatchedRows.filter(row => row.gapSecs < 0).length;
+  const reasonImpactSeconds = reasonMatchedRows.reduce((sum, row) => sum + row.impactSecs, 0);
+  const reasonWeightedGapMin = matchedReasonTickets ? reasonImpactSeconds / matchedReasonTickets / 60 : 0;
+  const reasonImpactHours = reasonImpactSeconds / 3600;
   const reasonImpactFte = fte(reasonImpactHours);
   const closedIncompleteFte = fte(closedIncompleteHours);
   const emailFte = fte(emailHours);
@@ -5671,7 +5687,7 @@ function renderCapacity() {
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Email processing</div><div class="reason-math-value">' + capNum(emailFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.email.tickets || 0).toLocaleString() + ' emails × ' + capNum(capacitySettings.emailMinutes) + ' min</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Reason timing gap</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 16 · reason timing gap</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Reason timing gap</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">Category-matched weighted gap</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
@@ -5679,12 +5695,14 @@ function renderCapacity() {
       '<div class="reason-math-arrow">=</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Revised sized floor</div><div class="reason-math-value">' + capNum(revisedSizedFloor, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(deckFloorDelta, 2) + ' FTE vs 83.1 deck floor</div></div>' +
     '</div></div>' +
-    '<div class="reason-math"><div class="reason-math-head"><div><h3>Waiting / hold / chasing — reason-tagged timing gap ' + deckTag('32') + '</h3><div class="note">Reason-tagged ticket volume × the average time gap versus tickets with no reason.</div></div></div><div class="reason-math-flow">' +
-      '<div class="reason-math-step"><div class="reason-math-label">Reason-tagged tickets</div><div class="reason-math-value">' + Number(data.reasonTagged.tickets || 0).toLocaleString() + '</div><div class="reason-math-detail">Average: ' + capNum(reasonTaggedAvgMin, 2) + ' min / ticket</div></div>' +
+    '<div class="reason-math"><div class="reason-math-head"><div><h3>Waiting / hold / chasing — category-matched weighted timing gap ' + deckTag('32') + '</h3><div class="note">Each category compares its own reason-tagged tickets with tickets without a reason. Category gaps are weighted by that category&apos;s reason-tagged ticket volume; positive and negative gaps are both retained.</div></div></div><div class="reason-math-flow">' +
+      '<div class="reason-math-step"><div class="reason-math-label">Matched categories</div><div class="reason-math-value">' + reasonMatchedRows.length.toLocaleString() + '</div><div class="reason-math-detail">Both reason and no-reason cohorts · ' + reasonNegativeCategories.toLocaleString() + ' negative gaps retained</div></div>' +
+      '<div class="reason-math-arrow">→</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Reason-tagged tickets</div><div class="reason-math-value">' + matchedReasonTickets.toLocaleString() + '</div><div class="reason-math-detail">Tickets in matched categories' + (unmatchedReasonTickets ? ' · ' + unmatchedReasonTickets.toLocaleString() + ' unmatched excluded' : '') + '</div></div>' +
       '<div class="reason-math-arrow">×</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Incremental time</div><div class="reason-math-value">' + capNum(reasonDifferenceMin, 2) + ' min</div><div class="reason-math-detail">' + capNum(reasonTaggedAvgMin, 2) + ' min with reason − ' + capNum(reasonBlankAvgMin, 2) + ' min without</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Weighted category gap</div><div class="reason-math-value">' + capNum(reasonWeightedGapMin, 2) + ' min</div><div class="reason-math-detail">Σ category impact ÷ matched reason tickets</div></div>' +
       '<div class="reason-math-arrow">÷ 60</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Incremental hours</div><div class="reason-math-value">' + capNum(reasonImpactHours) + ' h</div><div class="reason-math-detail">' + Number(data.reasonTagged.tickets || 0).toLocaleString() + ' × ' + capNum(reasonDifferenceMin, 2) + ' ÷ 60</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Incremental hours</div><div class="reason-math-value">' + capNum(reasonImpactHours) + ' h</div><div class="reason-math-detail">' + matchedReasonTickets.toLocaleString() + ' × ' + capNum(reasonWeightedGapMin, 2) + ' ÷ 60</div></div>' +
       '<div class="reason-math-arrow">÷ ' + capNum(monthlyHours) + '</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Capacity impact</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(reasonImpactHours) + ' hours ÷ ' + capNum(monthlyHours) + ' h/FTE</div></div>' +
     '</div></div>' +
@@ -5699,6 +5717,7 @@ function renderCapacity() {
     '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
       row('Email-to-SNOW handling', '32', Number(data.email.tickets || 0).toLocaleString() + ' email-origin tickets', 'tickets × ' + capNum(capacitySettings.emailMinutes) + ' min ÷ 60', emailHours, fte(emailHours), 'CSV calculated', 'Time-per-ticket is editable') +
       row('Closed Incomplete handling', '32', Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets where state = Closed Incomplete', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' h/FTE', closedIncompleteHours, fte(closedIncompleteHours), 'CSV calculated', 'Proxy: assumes every Closed Incomplete ticket is duplicate/irrelevant') +
+      row('Reason timing gap — category-matched weighted', '32', matchedReasonTickets.toLocaleString() + ' reason-tagged tickets across ' + reasonMatchedRows.length.toLocaleString() + ' matched categories', 'Σ [category reason tickets × (category avg with reason − category avg without reason)] ÷ 3,600 ÷ ' + capNum(monthlyHours), reasonImpactHours, reasonImpactFte, 'CSV calculated', reasonNegativeCategories.toLocaleString() + ' negative category gaps retained; categories require both cohorts') +
       row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
       row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
       row('Multiple Check Waste — Milestone E6/E8', '32', modeWasteRows.reduce((sum, item) => sum + Number(item.row.jobs_over_two || 0), 0).toLocaleString() + ' shipment IDs with >2 tickets across four areas', '(average shipment time >2 tickets − average shipment time ≤2 tickets) × shipment IDs >2 ÷ 60 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Uses the same Shipment-ID allocation as the Milestone E6/E8 table') +
