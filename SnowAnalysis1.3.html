@@ -56,7 +56,7 @@ window.GBS_BASELINE = {"cat": {"Registration": [5, 15], "Validation": [5, 15], "
 //    populated; basis majority vote; robust opened_at / time_worked
 //    parsing; hardened CSV import (canonical headers, dedup); dup_group
 //    re-rolled on load/merge; exclusions synced DB <-> localStorage.
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 // Duplicate detection thresholds
 const SD_THRESHOLD = 0.8;
@@ -396,14 +396,14 @@ function saveExcluded() {
 
 const TASKS_DDL = `CREATE TABLE tasks (
   number TEXT, consol_id TEXT, shipment_id TEXT, quick_booking_id TEXT, short_desc TEXT,
-  assignment_group TEXT, state TEXT, category TEXT, sub_category TEXT,
+  assignment_group TEXT, state TEXT, category TEXT, sub_category TEXT, business TEXT,
   open_from TEXT, country TEXT, email TEXT, mailbox TEXT, opened_at TEXT, assigned_to TEXT,
   email_comment TEXT, time_worked TEXT, reason TEXT
 )`;
 
 const PARENT_DDL = `CREATE TABLE parent (
   number TEXT PRIMARY KEY, consol_key TEXT, agroup TEXT, state TEXT,
-  category TEXT, sub_category TEXT, source TEXT, country TEXT, email TEXT, mailbox TEXT,
+  category TEXT, sub_category TEXT, business TEXT, source TEXT, country TEXT, email TEXT, mailbox TEXT,
   opened_at TEXT, opened_ts INTEGER, time_worked INTEGER,
   short_desc TEXT, sd_norm TEXT, has_content INTEGER DEFAULT 0, assigned_to TEXT, reason TEXT,
   quick_booking_id TEXT, has_shipment_id INTEGER DEFAULT 0, has_na_shipment_id INTEGER DEFAULT 0,
@@ -416,7 +416,7 @@ const CHILD_DDL = `CREATE TABLE child (
   number TEXT PRIMARY KEY, consol_key TEXT, short_desc TEXT, agroup TEXT,
   state TEXT, category TEXT, opened_at TEXT, opened_ts INTEGER,
   time_worked INTEGER, link_method TEXT, n_parents INTEGER, parent_number TEXT,
-  has_na_shipment_id INTEGER DEFAULT 0
+  has_na_shipment_id INTEGER DEFAULT 0, reason TEXT
 )`;
 
 const DUP_CLUSTER_DDL = `CREATE TABLE dup_cluster (
@@ -441,6 +441,114 @@ const EXCLUDED_DDL = `CREATE TABLE IF NOT EXISTS excluded (consol_key TEXT PRIMA
 const DGA_DDL = `CREATE TABLE dup_group_agroup (consol_key TEXT, agroup TEXT)`;
 const DGS_DDL = `CREATE TABLE dup_group_source (consol_key TEXT, source TEXT)`;
 
+// ── Cost & Capacity — live aggregates from the uploaded CSV ───────────────
+// This deliberately uses the parent table created from the user-uploaded CSV.
+// Each metric exposes its input and formula in the UI; fields the extract cannot
+// provide (report workload and after-shift hours) remain user-editable inputs.
+function getCostCapacityMetrics(opts = {}) {
+  const db = getPrimaryDB();
+  if (!hasTable(db, 'parent')) return { available: false, message: 'Upload a CSV to calculate capacity metrics.' };
+  const groups = (Array.isArray(opts.groups) ? opts.groups : []).filter(Boolean);
+  const groupSql = groups.length ? ' AND agroup IN (' + groups.map(() => '?').join(',') + ')' : '';
+  const groupArgs = groups.slice();
+  const one = (sql, args = []) => queryOne(db, sql, args) || {};
+  const metric = (where, args = []) => one(
+    `SELECT COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs, COALESCE(AVG(time_worked),0) AS avg_secs
+     FROM parent WHERE ${where}${groupSql}`, [...args, ...groupArgs]);
+  const thresholdSecs = Math.max(0, Number(opts.quickBookingThresholdMin || 7) * 60);
+  const quickBooking = queryAll(db,
+    `SELECT COALESCE(NULLIF(country,''),'Unspecified') AS country,
+            COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs,
+            COALESCE(AVG(time_worked),0) AS avg_secs,
+            SUM(CASE WHEN time_worked > ? THEN 1 ELSE 0 END) AS over_threshold
+     FROM parent WHERE LOWER(TRIM(COALESCE(category,''))) = 'quick booking'${groupSql}
+     GROUP BY COALESCE(NULLIF(country,''),'Unspecified') ORDER BY tickets DESC LIMIT 8`,
+    [thresholdSecs, ...groupArgs]);
+  const email = metric("LOWER(COALESCE(source,'')) LIKE '%email%'");
+  const siReason = metric("LOWER(TRIM(COALESCE(category,''))) = 'shipping instruction' AND TRIM(COALESCE(reason,'')) != ''");
+  const invoicing = metric("LOWER(TRIM(COALESCE(category,''))) = 'invoicing'");
+  const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
+  const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
+  const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
+  const closedIncompleteCategoryRegionInputs = queryAll(db,
+    `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
+            COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country,
+            COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs
+     FROM parent WHERE LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'${groupSql}
+     GROUP BY COALESCE(NULLIF(TRIM(category),''),'Uncategorised'), COALESCE(agroup,''), COALESCE(country,'')`, groupArgs);
+  const duplicate = currentStats && currentStats.summary ? currentStats.summary : {};
+  return {
+    available: true,
+    scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
+    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, closedIncompleteCategoryRegionInputs, quickBooking,
+    tickets: Number(duplicate.total_parents || 0),
+  };
+}
+
+// Business is often missing on individual tickets.  A blank is filled from an
+// unambiguous category map.  For a category that spans businesses, the
+// assignment-group code is the tie-breaker: FN (Finance) takes precedence over
+// GF, then GL, then GF.  Finance and GL are out of scope for this GBS analysis.
+function getBusinessScope(db) {
+  const byCategory = new Map();
+  for (const row of queryAll(db, `SELECT category, UPPER(TRIM(COALESCE(business,''))) AS business
+      FROM tasks WHERE TRIM(COALESCE(category,'')) != '' AND TRIM(COALESCE(business,'')) != ''`)) {
+    const key = norm(row.category || '').toLowerCase();
+    if (!byCategory.has(key)) byCategory.set(key, new Set());
+    byCategory.get(key).add(row.business);
+  }
+  return {
+    resolve(category, rawBusiness, assignmentGroup) {
+      const tagged = norm(rawBusiness || '').toUpperCase();
+      const values = byCategory.get(norm(category || '').toLowerCase());
+      const group = ' ' + norm(assignmentGroup || '').toUpperCase().replace(/-/g, ' ') + ' ';
+      // FN must be evaluated first because finance assignment groups may also
+      // contain GF, for example: "GBS - FN - GF - AU - AP INV B".
+      const groupBusiness = /\sFN\s/.test(group) ? 'FINANCE'
+        : /\sGL\s/.test(group) ? 'GL'
+        : /\sGF\s/.test(group) ? 'GF' : '';
+      const business = values && values.size > 1 && groupBusiness
+        ? groupBusiness
+        : tagged || (values && values.size === 1 ? [...values][0] : '');
+      return { business, excluded: business === 'FINANCE' || business === 'GL' };
+    },
+  };
+}
+
+function applyBusinessScopeToParent(db) {
+  const before = queryValue(db, 'SELECT COUNT(*) FROM parent') || 0;
+  // Resolve ambiguous categories from their assignment-group code.  FN is
+  // intentionally first: a finance group can legitimately contain GF too.
+  runSQL(db, `UPDATE parent AS p SET business = CASE
+      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% FN %' THEN 'FINANCE'
+      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% GL %' THEN 'GL'
+      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% GF %' THEN 'GF'
+      ELSE business END
+    WHERE 1 < (SELECT COUNT(DISTINCT UPPER(TRIM(p2.business))) FROM parent p2
+               WHERE LOWER(TRIM(p2.category)) = LOWER(TRIM(p.category))
+                 AND TRIM(COALESCE(p2.business,'')) != '')`);
+  // Retag remaining blanks from the loaded population only where the category
+  // map is unambiguous.  This keeps the rule fully data-driven for every upload.
+  runSQL(db, `UPDATE parent AS p SET business = (
+      SELECT MAX(UPPER(TRIM(p2.business))) FROM parent p2
+      WHERE LOWER(TRIM(p2.category)) = LOWER(TRIM(p.category))
+        AND TRIM(COALESCE(p2.business,'')) != ''
+    )
+    WHERE TRIM(COALESCE(p.business,'')) = ''
+      AND TRIM(COALESCE(p.category,'')) != ''
+      AND 1 = (SELECT COUNT(DISTINCT UPPER(TRIM(p3.business))) FROM parent p3
+               WHERE LOWER(TRIM(p3.category)) = LOWER(TRIM(p.category))
+                 AND TRIM(COALESCE(p3.business,'')) != '')`);
+  const backfilled = queryValue(db, `SELECT COUNT(*) FROM parent
+    WHERE UPPER(TRIM(COALESCE(business,''))) IN ('FINANCE','GL')`) || 0;
+  runSQL(db, `DELETE FROM parent
+    WHERE UPPER(TRIM(COALESCE(business,''))) IN ('FINANCE','GL')`);
+  runSQL(db, 'DELETE FROM child WHERE number NOT IN (SELECT number FROM parent)');
+  runSQL(db, 'DELETE FROM ship_link WHERE number NOT IN (SELECT number FROM parent)');
+  runSQL(db, 'DELETE FROM child_ship_link WHERE number NOT IN (SELECT number FROM child)');
+  return { before, excluded: backfilled, retained: before - backfilled };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SECTION 7: CSV Import (build_db equivalent)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,6 +568,7 @@ const CSV_HEADER_MAP = {
   assignment_group: 'assignment_group', group: 'assignment_group',
   state: 'state', category: 'category',
   sub_category: 'sub_category', subcategory: 'sub_category',
+  business: 'business',
   open_from: 'open_from', source: 'open_from',
   country: 'country', country_code: 'country',
   email: 'email', mailbox: 'mailbox',
@@ -470,13 +579,13 @@ const CSV_HEADER_MAP = {
   time_worked: 'time_worked',
 };
 const CSV_TASK_COLS = ['number', 'consol_id', 'shipment_id', 'quick_booking_id', 'short_desc',
-  'assignment_group', 'state', 'category', 'sub_category', 'open_from',
+  'assignment_group', 'state', 'category', 'sub_category', 'business', 'open_from',
   'country', 'email', 'mailbox', 'opened_at', 'assigned_to', 'email_comment', 'time_worked', 'reason'];
-// 17 columns × 50 rows stays well below SQLite's usual 999 bind-variable
+// 19 columns × 50 rows stays well below SQLite's usual 999 bind-variable
 // limit, while cutting JavaScript → WASM calls by roughly fifty-fold.
 const CSV_INSERT_ROWS = 50;
-// The compact large-file parent row has 21 values. Forty rows keeps each
-// statement below SQLite's conservative 999-variable limit (840 variables)
+// The compact large-file parent row has 22 values. Forty rows keeps each
+// statement below SQLite's conservative 999-variable limit (880 variables)
 // while still batching the JavaScript → WASM boundary efficiently.
 const LARGE_CSV_INSERT_ROWS = 40;
 
@@ -777,11 +886,11 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     runSQL(db, EXCLUDED_DDL);
 
     const parentInsert = db.prepare(`INSERT INTO parent
-      (number, consol_key, agroup, state, category, sub_category, source,
+      (number, consol_key, agroup, state, category, sub_category, business, source,
        country, email, mailbox, opened_at, opened_ts, time_worked,
        short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id, has_na_shipment_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const childInsert = db.prepare('INSERT OR REPLACE INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const shipInsert = db.prepare('INSERT INTO ship_link VALUES (?,?)');
     const childShipInsert = db.prepare('INSERT INTO child_ship_link VALUES (?,?)');
     let lastRowId = 0;
@@ -790,7 +899,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
     const BATCH_SIZE = 1500;
     while (true) {
       const rows = queryAll(db, `SELECT rowid AS _rowid, number, consol_id, shipment_id, quick_booking_id,
-        short_desc, assignment_group, state, category, sub_category, open_from,
+        short_desc, assignment_group, state, category, sub_category, business, open_from,
         country, email, mailbox, opened_at, assigned_to, time_worked, reason
         FROM tasks WHERE rowid > ? ORDER BY rowid LIMIT ?`, [lastRowId, BATCH_SIZE]);
       if (!rows.length) break;
@@ -807,7 +916,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
           childInsert.bind([num, consolKey, norm(r.short_desc || ''),
             norm(r.assignment_group || '') || '(unassigned)', norm(r.state || ''),
             norm(r.category || ''), (r.opened_at || '').trim(), openedTs, tw,
-            '', 0, '', missingShipmentIsNa ? 1 : 0]);
+            '', 0, '', missingShipmentIsNa ? 1 : 0, norm(r.reason || '')]);
           childInsert.step();
           childInsert.reset();
           for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
@@ -815,13 +924,12 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
             childShipInsert.step();
             childShipInsert.reset();
           }
-          continue;
         }
         const sd = norm(r.short_desc || '');
         const shipmentKeys = shipmentKeysForTask(r.shipment_id);
         parentInsert.bind([num, consolKey, norm(r.assignment_group || '') || '(unassigned)',
-          norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''),
-          source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(),
+        norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''), norm(r.business || '').toUpperCase(),
+        source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(),
           norm(r.mailbox || ''), (r.opened_at || '').trim(), openedTs, tw,
           sd, normSd(sd), sd ? 1 : 0, norm(r.assigned_to || ''), norm(r.reason || ''),
           norm(r.quick_booking_id || ''), shipmentKeys.length ? 1 : 0, missingShipmentIsNa ? 1 : 0]);
@@ -838,6 +946,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
         `Prepared ${Math.min(processed, totalTasks).toLocaleString()} / ${totalTasks.toLocaleString()} rows`);
     }
     parentInsert.free(); childInsert.free(); shipInsert.free(); childShipInsert.free();
+    const businessScopeResult = applyBusinessScopeToParent(db);
 
     runSQL(db, 'ALTER TABLE parent ADD COLUMN has_child INTEGER DEFAULT 0');
     for (const s of [
@@ -867,6 +976,7 @@ function buildLargeDatasetDerived(db, dbId, totalTasks) {
       unparsed_opened_ts: 0, fanout_events: 0, large_dataset_mode: true,
     };
     runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['scan', JSON.stringify(scanPayload)]);
+    runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['business_scope', JSON.stringify(businessScopeResult)]);
     runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['schema_version', String(SCHEMA_VERSION)]);
     runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['built_at', new Date().toISOString()]);
     runSQL(db, 'COMMIT');
@@ -918,12 +1028,13 @@ function buildDerived(db, dbId) {
   const parentRows = [];
   let totalChildren = 0;
   let unparsedTs = 0;   // rows with a non-empty opened_at that failed to parse
+  const businessScope = getBusinessScope(db);
 
   const parentInsert = db.prepare(`INSERT INTO parent
-    (number, consol_key, agroup, state, category, sub_category, source,
+    (number, consol_key, agroup, state, category, sub_category, business, source,
      country, email, mailbox, opened_at, opened_ts, time_worked,
      short_desc, sd_norm, has_content, assigned_to, reason, quick_booking_id, has_shipment_id, has_na_shipment_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   // Process in batches to avoid memory issues
   const BATCH_SIZE = 2000;
@@ -933,6 +1044,8 @@ function buildDerived(db, dbId) {
 
     for (const r of rows) {
       const source = norm(r.open_from || '');
+      const scopedBusiness = businessScope.resolve(r.category, r.business, r.assignment_group);
+      if (scopedBusiness.excluded) continue;
       const num = (r.number || '').trim();
       const openedTs = parseCsvDate(r.opened_at);
       if ((r.opened_at || '').trim() && openedTs == null) unparsedTs++;
@@ -952,12 +1065,12 @@ function buildDerived(db, dbId) {
           opened_ts: openedTs,
           time_worked: parseTimeWorked(r.time_worked),
           has_na_shipment_id: hasNaShipmentId(r.shipment_id) ? 1 : 0,
+          reason: norm(r.reason || ''),
         });
         for (const sid of shipmentKeysForTask(r.shipment_id, r.category, r.quick_booking_id)) {
           if (!shipToChildren.has(sid)) shipToChildren.set(sid, new Set());
           shipToChildren.get(sid).add(num);
         }
-        continue;
       }
 
       const consolKey = normKey(r.consol_id || '');
@@ -970,7 +1083,7 @@ function buildDerived(db, dbId) {
 
       parentInsert.bind([
         num, consolKey, norm(r.assignment_group || '') || '(unassigned)',
-        norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''),
+        norm(r.state || ''), norm(r.category || ''), norm(r.sub_category || ''), scopedBusiness.business,
         source || '(empty)', norm(r.country || ''), (r.email || '').trim().toLowerCase(), norm(r.mailbox || ''),
         (r.opened_at || '').trim(), openedTs, tw,
         sd, sdNorm, hasContent, norm(r.assigned_to || ''), norm(r.reason || ''),
@@ -1345,6 +1458,11 @@ function buildDerived(db, dbId) {
         }
       }
     }
+    // Child tasks now participate in the main analysis population, but a
+    // linkage is meaningful only to a non-child parent—not to the child
+    // record itself or another child task sharing the same shipment/consol.
+    matched = new Set([...matched].filter(n => metaByNum.get(n)?.source !== 'Child Task'));
+    if (!matched.size) method = null;
     if (method) {
       linkedMethods[method] = (linkedMethods[method] || 0) + 1;
       for (const n of matched) parentsWithChildren.add(n);
@@ -1356,17 +1474,17 @@ function buildDerived(db, dbId) {
       opened_at: ch.opened_at, opened_ts: ch.opened_ts, time_worked: ch.time_worked,
       link_method: method || '', n_parents: matched.size,
       parent_number: sortedParents[0] || '',
-      has_na_shipment_id: ch.has_na_shipment_id,
+      has_na_shipment_id: ch.has_na_shipment_id, reason: ch.reason,
     });
   }
 
   runSQL(db, CHILD_DDL);
-  const childInsert = db.prepare(`INSERT INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const childInsert = db.prepare(`INSERT INTO child VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   for (const ch of childRows) {
     childInsert.bind([
       ch.number, ch.consol_key, ch.short_desc, ch.agroup, ch.state, ch.category,
       ch.opened_at, ch.opened_ts, ch.time_worked, ch.link_method,
-      ch.n_parents, ch.parent_number, ch.has_na_shipment_id,
+      ch.n_parents, ch.parent_number, ch.has_na_shipment_id, ch.reason,
     ]);
     childInsert.step();
     childInsert.reset();
@@ -4068,10 +4186,10 @@ async function processLargeCSVFile(file) {
             return value == null ? '' : String(value);
           };
           const parentStmtFor = n => statementFor(insertStatements.parent, n, `INSERT OR IGNORE INTO parent
-            (number,consol_key,agroup,state,category,sub_category,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id,has_na_shipment_id)
-            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+            (number,consol_key,agroup,state,category,sub_category,business,source,country,email,mailbox,opened_at,opened_ts,time_worked,short_desc,sd_norm,has_content,assigned_to,reason,quick_booking_id,has_shipment_id,has_na_shipment_id)
+            VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const childStmtFor = n => statementFor(insertStatements.child, n,
-            `INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
+            `INSERT OR IGNORE INTO child VALUES ${Array(n).fill('(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')}`);
           const shipStmtFor = n => statementFor(insertStatements.ship, n,
             `INSERT INTO ship_link VALUES ${Array(n).fill('(?,?)').join(',')}`);
           const childShipStmtFor = n => statementFor(insertStatements.childShip, n,
@@ -4098,19 +4216,18 @@ async function processLargeCSVFile(file) {
                 const timeWorked = parseTimeWorked(read(row, 'time_worked'));
                 if (source === 'Child Task') {
                   children.push(number, normKey(read(row, 'consol_id')), shortDesc, agroup, state, category,
-                    openedAt, openedTs, timeWorked, '', 0, '', missingShipmentIsNa ? 1 : 0);
+                  openedAt, openedTs, timeWorked, '', 0, '', missingShipmentIsNa ? 1 : 0, norm(read(row, 'reason')));
                   for (const sid of shipmentKeysForTask(rawShipmentId, category, read(row, 'quick_booking_id'))) childShips.push(sid, number);
-                  continue;
                 }
                 parents.push(number, normKey(read(row, 'consol_id')), agroup, state, category,
-                  norm(read(row, 'sub_category')), source || '(empty)', norm(read(row, 'country')),
+                  norm(read(row, 'sub_category')), norm(read(row, 'business')).toUpperCase(), source || '(empty)', norm(read(row, 'country')),
                   read(row, 'email').trim().toLowerCase(), norm(read(row, 'mailbox')), openedAt, openedTs,
                   timeWorked, shortDesc, normSd(shortDesc), shortDesc ? 1 : 0, norm(read(row, 'assigned_to')),
                   norm(read(row, 'reason')), norm(read(row, 'quick_booking_id')), shipmentKeys.length ? 1 : 0, missingShipmentIsNa ? 1 : 0);
                 for (const sid of shipmentKeys) ships.push(sid, number);
               }
-              if (parents.length) parentStmtFor(parents.length / 21).run(parents);
-              if (children.length) childStmtFor(children.length / 13).run(children);
+              if (parents.length) parentStmtFor(parents.length / 22).run(parents);
+              if (children.length) childStmtFor(children.length / 14).run(children);
               if (ships.length) shipStmtFor(ships.length / 2).run(ships);
               if (childShips.length) childShipStmtFor(childShips.length / 2).run(childShips);
             }
@@ -4130,6 +4247,7 @@ async function processLargeCSVFile(file) {
       freeInsertStatements();
     }
 
+    const businessScopeResult = applyBusinessScopeToParent(db);
     updateProgress('Large-file mode', 'Finalizing shipment indexes...');
     runSQL(db, 'ALTER TABLE parent ADD COLUMN has_child INTEGER DEFAULT 0');
     for (const s of [
@@ -4148,6 +4266,7 @@ async function processLargeCSVFile(file) {
       subject_dup_groups: 0, cross_email_subject_dups: 0, time_gaps: [], cross_sims: [], same_sims: [],
       sim_sampled_groups: 0, unparsed_opened_ts: 0, fanout_events: 0, large_dataset_mode: true };
     runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['scan', JSON.stringify(scan)]);
+    runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['business_scope', JSON.stringify(businessScopeResult)]);
     runSQL(db, 'INSERT OR REPLACE INTO meta VALUES (?,?)', ['schema_version', String(SCHEMA_VERSION)]);
     syncExcluded(db);
     currentStats = computeStats(db);
@@ -4419,6 +4538,7 @@ if (typeof window !== 'undefined') {
     getDataDateRange,
     getCategoryRegionStats,
     getMilestoneModeStats,
+    getCostCapacityMetrics,
     getDupTrend,
     getConsolFanout,
     splitList,
@@ -4842,7 +4962,47 @@ if (typeof window !== 'undefined') {
   .quad-sum-card .qsc-val { font-weight: 700; font-variant-numeric: tabular-nums; }
   .bar { height: 6px; border-radius: 3px; background: var(--red); display: inline-block; vertical-align: middle; }
 
+  /* Cost & Capacity tab: an auditable management view over live CSV aggregates. */
+  .capacity-hero { background: #12324a; color: #fff; border-radius: 12px; padding: 21px 24px; margin-bottom: 14px; position: relative; overflow: hidden; }
+  .capacity-hero::after { content: ''; position: absolute; width: 240px; height: 240px; border: 1px solid rgba(93, 220, 213, .38); border-radius: 50%; right: -68px; top: -135px; }
+  .capacity-eyebrow { color: #a9d9d8; text-transform: uppercase; letter-spacing: .1em; font-size: .64rem; font-weight: 700; }
+  .capacity-hero h2 { font-size: 1.55rem; margin: 3px 0 4px; position: relative; z-index: 1; }
+  .capacity-hero p { color: #d5e8e9; max-width: 780px; font-size: .79rem; position: relative; z-index: 1; }
+  .capacity-controls { display: flex; gap: 9px; flex-wrap: wrap; align-items: end; padding: 11px 13px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 13px; }
+  .capacity-controls label { display: flex; flex-direction: column; gap: 3px; font-size: .64rem; color: var(--text3); font-weight: 650; }
+  .capacity-controls input { width: 86px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; font-size: .75rem; color: var(--text); }
+  .capacity-controls .scope { margin-left: auto; font-size: .7rem; color: var(--text3); padding-bottom: 5px; }
+  .capacity-kpis { grid-template-columns: repeat(4, 1fr); }
+  .capacity-kpis .kpi { min-height: 104px; }
+  .capacity-kpis .kpi-value { font-size: 1.55rem; color: var(--teal); }
+  .capacity-kpis .kpi-sub { line-height: 1.4; }
+  .capacity-warning { background: #fff7e0; border: 1px solid #e6a817; color: #705500; border-radius: 8px; padding: 10px 12px; margin-bottom: 13px; font-size: .75rem; }
+  .reason-math { border: 1px solid #b9d8da; background: #f4fbfb; border-radius: 10px; padding: 14px 15px; margin: 0 0 13px; }
+  .reason-math-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .reason-math h3 { font-size: .82rem; margin: 0; color: var(--text); }
+  .reason-math .note { color: var(--text3); font-size: .68rem; margin-top: 3px; }
+  .reason-math-flow { display: flex; align-items: stretch; gap: 8px; }
+  .reason-math-step { flex: 1; min-width: 0; padding: 10px 11px; border-radius: 7px; background: #fff; border: 1px solid #d9e9ea; }
+  .reason-math-step.result { background: #12324a; border-color: #12324a; color: #fff; }
+  .reason-math-label { font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text3); }
+  .reason-math-step.result .reason-math-label { color: #a9d9d8; }
+  .reason-math-value { font-size: 1.2rem; font-weight: 750; color: var(--teal); margin: 3px 0 2px; }
+  .reason-math-step.result .reason-math-value { color: #fff; }
+  .reason-math-detail { font-size: .66rem; color: var(--text3); line-height: 1.35; }
+  .reason-math-step.result .reason-math-detail { color: #d5e8e9; }
+  .reason-math-arrow { display: flex; align-items: center; color: #4f9195; font-size: 1.2rem; font-weight: 700; }
+  .capacity-table td, .capacity-table th { vertical-align: top; }
+  .capacity-table .calc { color: var(--text2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+  .capacity-status { white-space: nowrap; font-size: .63rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: #e6f4ea; color: #1e8a4c; }
+  .capacity-status.manual { background: #fff7e0; color: #896400; }
+  .deck-tag { display: inline-block; margin-left: 5px; padding: 1px 6px; border: 1px solid #b9d8da; border-radius: 9px; color: #176b72; background: #edf8f8; font-size: .6rem; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+  .capacity-qb { margin-top: 12px; }
+  .capacity-qb h3 { font-size: .8rem; margin-bottom: 3px; }
+  .capacity-qb .note { font-size: .68rem; color: var(--text3); margin-bottom: 8px; }
+
   @media (max-width: 1400px) { .sidebar { width: 320px; min-width: 320px; } .kpi-row { grid-template-columns: repeat(3, 1fr); } .chart-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 1000px) { .capacity-kpis { grid-template-columns: repeat(2, 1fr); } .capacity-controls .scope { margin-left: 0; width: 100%; } }
+  @media (max-width: 850px) { .reason-math-flow { flex-direction: column; } .reason-math-arrow { height: 14px; justify-content: center; transform: rotate(90deg); } }
 </style>
 </head>
 <body>
@@ -4916,6 +5076,7 @@ if (typeof window !== 'undefined') {
     <div class="tabs">
       <div class="tab active" onclick="switchTab('duplicates')">Consols</div>
       <div class="tab" onclick="switchTab('dashboard')">Dashboard</div>
+      <div class="tab" onclick="switchTab('capacity')">Cost &amp; Capacity</div>
       <div class="tab" onclick="switchTab('raw')">Raw Data</div>
     </div>
     <div class="dup-list" id="dupList"></div>
@@ -4933,6 +5094,7 @@ if (typeof window !== 'undefined') {
     </div>
     <div id="detailView" class="dash-view"><div class="detail-empty">&#8592; Select a consol to inspect its duplicate emails</div></div>
     <div id="dashView" class="dash-view"><div id="dashContent"></div></div>
+    <div id="capacityView" class="dash-view"><div id="capacityContent"></div></div>
     <div id="rawView" class="dash-view"><div id="rawContent"></div></div>
   </div>
 </div>
@@ -5164,12 +5326,132 @@ const escHTML = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const attr = s => escHTML(s).replace(/\n/g, ' ');
 
-const TABS = ['duplicates', 'dashboard', 'raw'];
+const capacitySettings = { hoursPerDay: 6.6, workDays: 22, emailMinutes: 2, quickBookingThreshold: 7, reportVolume: 19300, reportMinutes: 5, afterShiftHours: 595 };
+let capacityLoaded = false;
+const closedIncompleteDrill = { dimension: '', value: '' };
+const capNum = (n, digits = 1) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+const capHours = secs => Number(secs || 0) / 3600;
+function capacityInput(key, value) {
+  capacitySettings[key] = Number(value);
+  renderCapacity();
+}
+function closedIncompleteDrillSelect(dimension, value) {
+  if (closedIncompleteDrill.dimension === dimension && closedIncompleteDrill.value === value) {
+    closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
+  } else {
+    closedIncompleteDrill.dimension = dimension; closedIncompleteDrill.value = value;
+  }
+  renderCapacity();
+}
+function renderCapacity() {
+  const host = document.getElementById('capacityContent');
+  if (!host) return;
+  const monthlyHours = Math.max(0, capacitySettings.hoursPerDay * capacitySettings.workDays);
+  const data = window.App.getCostCapacityMetrics({ groups: currentGroups, quickBookingThresholdMin: capacitySettings.quickBookingThreshold });
+  if (!data.available) { host.innerHTML = '<div class="loading">Upload data first</div>'; return; }
+  const fte = hours => monthlyHours ? hours / monthlyHours : 0;
+  const emailHours = Number(data.email.tickets || 0) * Math.max(0, capacitySettings.emailMinutes) / 60;
+  const closedIncompleteHours = capHours(data.closedIncomplete.secs);
+  const siHours = capHours(data.siReason.secs);
+  const invoiceHours = capHours(data.invoicing.secs);
+  const reportHours = Math.max(0, capacitySettings.reportVolume) * Math.max(0, capacitySettings.reportMinutes) / 60;
+  const afterShiftHours = Math.max(0, capacitySettings.afterShiftHours);
+  const reasonTaggedAvgMin = Number(data.reasonTagged.tickets || 0) ? Number(data.reasonTagged.secs || 0) / Number(data.reasonTagged.tickets || 0) / 60 : 0;
+  const reasonBlankAvgMin = Number(data.reasonBlank.tickets || 0) ? Number(data.reasonBlank.secs || 0) / Number(data.reasonBlank.tickets || 0) / 60 : 0;
+  const reasonDifferenceMin = reasonTaggedAvgMin - reasonBlankAvgMin;
+  const reasonImpactHours = Number(data.reasonTagged.tickets || 0) * reasonDifferenceMin / 60;
+  const reasonImpactFte = fte(reasonImpactHours);
+  const closedIncompleteFte = fte(closedIncompleteHours);
+  const emailFte = fte(emailHours);
+  const reportFte = fte(reportHours);
+  const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + reportFte;
+  const deckFloorDelta = revisedSizedFloor - 83.1;
+  const qbRows = data.quickBooking.map(r => {
+    const avgMin = Number(r.avg_secs || 0) / 60;
+    const share = r.tickets ? 100 * Number(r.over_threshold || 0) / r.tickets : 0;
+    return '<tr><td>' + escHTML(r.country) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(avgMin) + ' min</td><td class="num">' + Number(r.over_threshold || 0).toLocaleString() + ' <span class="dup-pct">(' + capNum(share) + '%)</span></td><td class="num">' + capNum(capHours(r.secs)) + ' h</td></tr>';
+  }).join('') || '<tr><td colspan="5">No Quick Booking tickets in the current CSV/filter scope.</td></tr>';
+  const closedIncompleteCross = new Map();
+  data.closedIncompleteCategoryRegionInputs.forEach(r => {
+    const category = r.category || 'Uncategorised';
+    const region = regionOf(r.agroup, r.country) || 'Unspecified';
+    const key = category + '\x1f' + region;
+    const current = closedIncompleteCross.get(key) || { category, region, tickets: 0, secs: 0 };
+    current.tickets += Number(r.tickets || 0); current.secs += Number(r.secs || 0);
+    closedIncompleteCross.set(key, current);
+  });
+  const crossRows = [...closedIncompleteCross.values()];
+  const aggregate = (rows, field) => {
+    const map = new Map();
+    rows.forEach(r => { const name = r[field]; const item = map.get(name) || { name, tickets: 0, secs: 0 }; item.tickets += r.tickets; item.secs += r.secs; map.set(name, item); });
+    return [...map.values()].sort((a, b) => b.secs - a.secs);
+  };
+  const categoryRows = aggregate(closedIncompleteDrill.dimension === 'region' ? crossRows.filter(r => r.region === closedIncompleteDrill.value) : crossRows, 'category');
+  const regionRows = aggregate(closedIncompleteDrill.dimension === 'category' ? crossRows.filter(r => r.category === closedIncompleteDrill.value) : crossRows, 'region');
+  const drillButton = (dimension, row) => '<button type="button" onclick="closedIncompleteDrillSelect(\'' + dimension + '\', this.dataset.value)" data-value="' + attr(row.name) + '" style="border:0;background:' + (closedIncompleteDrill.dimension === dimension && closedIncompleteDrill.value === row.name ? 'rgba(0,126,135,.14)' : 'transparent') + ';padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + escHTML(row.name) + '</button>';
+  const breakdownRow = (dimension, r) => '<tr><td>' + drillButton(dimension, r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
+  const breakdownTotal = (rows, label) => { const totals = rows.reduce((sum, r) => ({ tickets: sum.tickets + r.tickets, secs: sum.secs + r.secs }), { tickets: 0, secs: 0 }); return '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + label + '</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot>'; };
+  const deckTag = slide => '<span class="deck-tag">Slide ' + slide + '</span>';
+  const row = (name, slide, source, formula, hours, result, status, note) => '<tr><td><b>' + name + '</b>' + deckTag(slide) + '<br><span class="dup-pct">' + source + '</span></td><td class="calc">' + formula + '</td><td class="num">' + (hours == null ? '—' : capNum(hours) + ' h') + '</td><td class="num"><b>' + (result == null ? '—' : capNum(result, 2) + ' FTE') + '</b></td><td><span class="capacity-status' + (status === 'CSV calculated' ? '' : ' manual') + '">' + status + '</span><br><span class="dup-pct">' + note + '</span></td></tr>';
+  host.innerHTML =
+    '<div class="capacity-hero"><div class="capacity-eyebrow">Live CSV calculation view</div><h2>Cost &amp; Capacity</h2><p>Metrics update from the uploaded ServiceNow CSV and the selected team filter. Every number below exposes its inputs and formula; the few inputs not held in ServiceNow remain editable.</p></div>' +
+    '<div class="capacity-controls">' +
+      '<label>Hours / working day<input type="number" min="0" step="0.1" value="' + capacitySettings.hoursPerDay + '" oninput="capacityInput(\'hoursPerDay\',this.value)"></label>' +
+      '<label>Working days / month<input type="number" min="0" step="1" value="' + capacitySettings.workDays + '" oninput="capacityInput(\'workDays\',this.value)"></label>' +
+      '<label>Time to process email (Mins)<input type="number" min="0" step="0.1" value="' + capacitySettings.emailMinutes + '" oninput="capacityInput(\'emailMinutes\',this.value)"></label>' +
+      '<label>QB threshold (min)<input type="number" min="0" step="0.5" value="' + capacitySettings.quickBookingThreshold + '" oninput="capacityInput(\'quickBookingThreshold\',this.value)"></label>' +
+      '<label>Number of Report Uploads a Month<input type="number" min="0" step="100" value="' + capacitySettings.reportVolume + '" oninput="capacityInput(\'reportVolume\',this.value)"></label>' +
+      '<label>Time to create a report (Mins)<input type="number" min="0" step="0.5" value="' + capacitySettings.reportMinutes + '" oninput="capacityInput(\'reportMinutes\',this.value)"></label>' +
+      '<label>After-shift hours<input type="number" min="0" step="1" value="' + capacitySettings.afterShiftHours + '" oninput="capacityInput(\'afterShiftHours\',this.value)"></label>' +
+      '<span class="scope">Scope: <b>' + escHTML(data.scope) + '</b> · Monthly FTE denominator: <b>' + capNum(monthlyHours) + ' h</b></span></div>' +
+    '<div class="capacity-warning"><b>How to read this:</b> green rows are directly calculated from the uploaded CSV. Closed Incomplete is a proxy: it assumes each ticket in that state is duplicate or irrelevant work. Amber rows are formula models that need a business input because ServiceNow does not record CW1 report volume or hours worked outside shift. The rows may overlap; do not sum them as a cost total without reconciling their scopes.</div>' +
+    '<div class="reason-math"><div class="reason-math-head"><div><h3>Revised sized floor — the four Slide 32 components ' + deckTag('32 / 34') + '</h3><div class="note">The deck used 2.1 + 54 + 16 + 11 = 83.1 FTE. This view replaces the two unsupported estimates with the current CSV calculations.</div></div></div><div class="reason-math-flow">' +
+      '<div class="reason-math-step"><div class="reason-math-label">Closed Incomplete</div><div class="reason-math-value">' + capNum(closedIncompleteFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 2.1 · CSV logged time</div></div>' +
+      '<div class="reason-math-arrow">+</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Email processing</div><div class="reason-math-value">' + capNum(emailFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.email.tickets || 0).toLocaleString() + ' emails × ' + capNum(capacitySettings.emailMinutes) + ' min</div></div>' +
+      '<div class="reason-math-arrow">+</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Reason timing gap</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 16 · reason timing gap</div></div>' +
+      '<div class="reason-math-arrow">+</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
+      '<div class="reason-math-arrow">=</div>' +
+      '<div class="reason-math-step result"><div class="reason-math-label">Revised sized floor</div><div class="reason-math-value">' + capNum(revisedSizedFloor, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(deckFloorDelta, 2) + ' FTE vs 83.1 deck floor</div></div>' +
+    '</div></div>' +
+    '<div class="reason-math"><div class="reason-math-head"><div><h3>Waiting / hold / chasing — reason-tagged timing gap ' + deckTag('32') + '</h3><div class="note">Reason-tagged ticket volume × the average time gap versus tickets with no reason.</div></div></div><div class="reason-math-flow">' +
+      '<div class="reason-math-step"><div class="reason-math-label">Reason-tagged tickets</div><div class="reason-math-value">' + Number(data.reasonTagged.tickets || 0).toLocaleString() + '</div><div class="reason-math-detail">Average: ' + capNum(reasonTaggedAvgMin, 2) + ' min / ticket</div></div>' +
+      '<div class="reason-math-arrow">×</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Incremental time</div><div class="reason-math-value">' + capNum(reasonDifferenceMin, 2) + ' min</div><div class="reason-math-detail">' + capNum(reasonTaggedAvgMin, 2) + ' min with reason − ' + capNum(reasonBlankAvgMin, 2) + ' min without</div></div>' +
+      '<div class="reason-math-arrow">÷ 60</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Incremental hours</div><div class="reason-math-value">' + capNum(reasonImpactHours) + ' h</div><div class="reason-math-detail">' + Number(data.reasonTagged.tickets || 0).toLocaleString() + ' × ' + capNum(reasonDifferenceMin, 2) + ' ÷ 60</div></div>' +
+      '<div class="reason-math-arrow">÷ ' + capNum(monthlyHours) + '</div>' +
+      '<div class="reason-math-step result"><div class="reason-math-label">Capacity impact</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(reasonImpactHours) + ' hours ÷ ' + capNum(monthlyHours) + ' h/FTE</div></div>' +
+    '</div></div>' +
+    '<div class="kpi-row capacity-kpis">' +
+      '<div class="kpi info"><div class="kpi-label">Uploaded tickets</div><div class="kpi-value">' + Number(data.tickets || 0).toLocaleString() + '</div><div class="kpi-sub">Current CSV / team scope</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Reason-coded SI effort ' + deckTag('19') + '</div><div class="kpi-value">' + capNum(fte(siHours), 2) + ' FTE</div><div class="kpi-sub">' + capNum(siHours) + ' logged hours</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Closed Incomplete handling ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(fte(closedIncompleteHours), 2) + ' FTE</div><div class="kpi-sub">' + Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets · ' + capNum(closedIncompleteHours) + ' logged hours</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Report generation model ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(fte(reportHours), 2) + ' FTE</div><div class="kpi-sub">Editable report-volume assumption</div></div>' +
+    '</div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
+      row('Email-to-SNOW handling', '32', Number(data.email.tickets || 0).toLocaleString() + ' email-origin tickets', 'tickets × ' + capNum(capacitySettings.emailMinutes) + ' min ÷ 60', emailHours, fte(emailHours), 'CSV calculated', 'Time-per-ticket is editable') +
+      row('Closed Incomplete handling', '32', Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets where state = Closed Incomplete', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' h/FTE', closedIncompleteHours, fte(closedIncompleteHours), 'CSV calculated', 'Proxy: assumes every Closed Incomplete ticket is duplicate/irrelevant') +
+      row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
+      row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
+      row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
+      row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
+    '</tbody></table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Click a category to show its region split. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Category</th><th class="num">Tickets</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (categoryRows.map(r => breakdownRow('category', r)).join('') || '<tr><td colspan="4">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
+    '<div class="chart-card"><h3>Closed Incomplete — by region ' + deckTag('32') + '</h3><div class="note">Click a region to show its category split. Region is derived from assignment group and country. ' + (closedIncompleteDrill.dimension === 'category' ? 'Showing regions for category “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'category\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (regionRows.map(r => breakdownRow('region', r)).join('') || '<tr><td colspan="4">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(regionRows, closedIncompleteDrill.dimension === 'category' ? 'Total (selected category)' : 'Total (all regions)') + '</table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full capacity-qb"><h3>Quick Booking — live country comparison ' + deckTag('15') + '</h3><div class="note">Derived from category = Quick Booking in the uploaded CSV. “Over threshold” uses the editable threshold above and time_worked.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country</th><th class="num">Tickets</th><th class="num">Average time</th><th class="num">Over threshold</th><th class="num">Logged effort</th></tr></thead><tbody>' + qbRows + '</tbody></table></div></div></div>';
+  capacityLoaded = true;
+}
+
+const TABS = ['duplicates', 'dashboard', 'capacity', 'raw'];
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach((t, i) =>
     t.classList.toggle('active', TABS[i] === tab));
   document.getElementById('detailView').classList.toggle('active', tab === 'duplicates');
   document.getElementById('dashView').classList.toggle('active', tab === 'dashboard');
+  document.getElementById('capacityView').classList.toggle('active', tab === 'capacity');
   document.getElementById('rawView').classList.toggle('active', tab === 'raw');
   if (tab === 'dashboard') {
     if (!dashLoaded) loadDashboard();
@@ -5184,11 +5466,13 @@ function switchTab(tab) {
       });
     });
   }
+  if (tab === 'capacity') renderCapacity();
   if (tab === 'raw' && !rawLoaded) loadRaw();
 }
 
 function markDashboardDirty() {
   dashboardFilterRevision++;
+  if (capacityLoaded && document.getElementById('capacityView').classList.contains('active')) renderCapacity();
 }
 
 async function loadGroups() {
@@ -7865,7 +8149,7 @@ function renderShipmentRegionSection() {
 // This view stays lazy because median calculation needs the individual logged
 // time values. It is scoped to the active Team filter, just like the other
 // dashboard pages.
-const reasonAnalysisState = { timeSearch: '', outlierMode: 'cap-p99', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
+const reasonAnalysisState = { timeSearch: '', outlierMode: 'include', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
 let reasonAnalysisCharts = [];
 let reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
 
@@ -7951,7 +8235,7 @@ function renderReasonAnalysis() {
               CASE WHEN TRIM(COALESCE(p.reason, '')) != '' THEN 1 ELSE 0 END has_reason,
               p.time_worked secs
          FROM parent p
-        WHERE p.time_worked > 0${filter.sql}`, filter.args);
+        WHERE 1 = 1${filter.sql}`, filter.args);
     const cachedTimeByCategory = new Map();
     for (const row of cachedTimeRows) {
       const item = cachedTimeByCategory.get(row.category) || { category: row.category, withReason: [], withoutReason: [] };
@@ -7965,7 +8249,7 @@ function renderReasonAnalysis() {
     const cachedReasonTimeRows = queryWithRetry(db,
       `SELECT ${categoryExpr} category, TRIM(p.reason) reason, p.time_worked secs
          FROM parent p
-        WHERE p.time_worked > 0 AND TRIM(COALESCE(p.reason, '')) != ''${filter.sql}`, filter.args);
+        WHERE TRIM(COALESCE(p.reason, '')) != ''${filter.sql}`, filter.args);
     const cachedReasonTimeGroups = new Map();
     for (const row of cachedReasonTimeRows) {
       const key = row.category + '\x1f' + row.reason;
@@ -7985,9 +8269,9 @@ function renderReasonAnalysis() {
     .sort((a, b) => b.count - a.count);
   const categoryTotals = reasonAnalysisCache.categoryTotals;
 
-  // `time_worked` is stored by the app as seconds. Restricting the comparison
-  // to positive values prevents blank imports (normalised to zero) from being
-  // mistaken for an observed handling time.
+  // `time_worked` is stored by the app as seconds. The default comparison
+  // includes zero values so the Total row exactly reconciles to the stated
+  // timing-gap FTE method; users may still apply an outlier cap if needed.
   const average = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   const treatOutliers = (values, item, population) => {
     if (reasonAnalysisState.outlierMode !== 'cap-p99') return values;
@@ -8030,6 +8314,20 @@ function renderReasonAnalysis() {
       ? av - bv : String(av || '').localeCompare(String(bv || ''), undefined, { numeric: true });
     return delta * sortDir || a.category.localeCompare(b.category);
   });
+  const visibleTimeCategorySet = new Set(visibleTimeRows.map(row => row.category));
+  const totalWithValues = [], totalWithoutValues = [];
+  let totalReasonTickets = 0, totalCategoryTickets = 0, totalWithOutliers = 0, totalWithoutOutliers = 0;
+  for (const item of reasonAnalysisCache.timeGroups) {
+    if (!visibleTimeCategorySet.has(item.category)) continue;
+    totalWithValues.push(...treatOutliers(item.withReason, item, 'with-reason'));
+    totalWithoutValues.push(...treatOutliers(item.withoutReason, item, 'without-reason'));
+    totalReasonTickets += byCategory.get(item.category) || 0;
+    totalCategoryTickets += categoryTotals.get(item.category) || 0;
+    totalWithOutliers += item.withOutliers.iqrExtremeCount;
+    totalWithoutOutliers += item.withoutOutliers.iqrExtremeCount;
+  }
+  const totalWithAverage = average(totalWithValues), totalWithoutAverage = average(totalWithoutValues);
+  const totalRow = visibleTimeRows.length ? '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>Total (displayed)</td><td class="num">' + totalWithValues.length.toLocaleString() + '</td><td class="num">' + (totalCategoryTickets ? (100 * totalReasonTickets / totalCategoryTickets).toFixed(2) + '%' : '—') + '</td><td class="num">' + totalWithOutliers.toLocaleString() + ' / ' + totalWithoutOutliers.toLocaleString() + '</td><td class="num">' + reasonMinutes(totalWithAverage) + '</td><td class="num">' + reasonMinutes(reasonMedian(totalWithValues)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(totalWithValues, 0.90)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(totalWithValues, 0.95)) + '</td><td class="num">' + totalWithoutValues.length.toLocaleString() + '</td><td class="num">' + reasonMinutes(totalWithoutAverage) + '</td><td class="num">' + reasonMinutes(reasonMedian(totalWithoutValues)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(totalWithoutValues, 0.90)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(totalWithoutValues, 0.95)) + '</td><td class="num" style="color:' + (totalWithAverage - totalWithoutAverage < 0 ? 'var(--red)' : 'var(--green)') + '">' + (totalWithAverage - totalWithoutAverage >= 0 ? '+' : '') + reasonMinutes(totalWithAverage - totalWithoutAverage) + '</td><td class="num" style="color:' + (reasonMedian(totalWithValues) - reasonMedian(totalWithoutValues) < 0 ? 'var(--red)' : 'var(--green)') + '">' + (reasonMedian(totalWithValues) - reasonMedian(totalWithoutValues) >= 0 ? '+' : '') + reasonMinutes(reasonMedian(totalWithValues) - reasonMedian(totalWithoutValues)) + '</td></tr></tfoot>' : '';
   const sortArrow = key => reasonAnalysisState.sortKey === key ? (reasonAnalysisState.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
   const expandedDetail = category => {
     const rows = reasonRows.filter(row => row.category === category);
@@ -8046,7 +8344,7 @@ function renderReasonAnalysis() {
   reasonAnalysisCharts = [];
   root.innerHTML =
     '<div class="chart-grid"><div class="chart-card full"><h3>Reason analysis and time</h3>' +
-      '<div class="note">Reasons show why tickets were held or reworked. Time comparisons use positive logged <b>time_worked</b> values, converted from seconds to minutes, and follow the active team filter. Raw values are retained; the control below only changes the calculation view.</div>' +
+      '<div class="note">Reasons show why tickets were held or reworked. Time comparisons include every uploaded ticket, including zero <b>time_worked</b> values, and follow the active team filter. With “Include extremes” selected and no search filter, the Total row reconciles to the timing-gap FTE calculation.</div>' +
       '<div class="kpi-row" style="margin-top:12px">' +
         '<div class="kpi info"><div class="kpi-label">Tickets with a reason</div><div class="kpi-value">' + reasonTickets.toLocaleString() + '</div><div class="kpi-sub">across ' + categoryRows.length.toLocaleString() + ' categories</div></div>' +
         '<div class="kpi purple"><div class="kpi-label">Reason types</div><div class="kpi-value">' + new Set(reasonRows.map(row => row.reason)).size.toLocaleString() + '</div><div class="kpi-sub">used in the selected tickets</div></div>' +
@@ -8054,9 +8352,9 @@ function renderReasonAnalysis() {
       '</div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Top categories with a reason</h3><div class="chart-wrap tall"><canvas id="reasonCategoryChart"></canvas></div></div>' +
       '<div class="chart-card"><h3>Largest time difference by category</h3><div class="note">Average and median minutes are shown together.</div><div class="chart-wrap tall"><canvas id="reasonTimeChart"></canvas></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>Time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><label>Extreme values <select onchange="reasonAnalysisOutlierMode(this.value)"><option value="cap-p99"' + (reasonAnalysisState.outlierMode === 'cap-p99' ? ' selected' : '') + '>Cap cohorts at category p99</option><option value="include"' + (reasonAnalysisState.outlierMode === 'include' ? ' selected' : '') + '>Include extremes</option></select></label><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="note">IQR extremes are values above Q3 + 3×IQR, calculated separately within each category and reason-status cohort. ' + (reasonAnalysisState.outlierMode === 'cap-p99' ? 'Time values are capped separately at each cohort&apos;s category p99.' : 'All logged values are included in the calculations.') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'outlierCount\')" style="cursor:pointer">IQR extremes W / W/O' + sortArrow('outlierCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withAverage\')" style="cursor:pointer">With: average' + sortArrow('withAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withMedian\')" style="cursor:pointer">With: median' + sortArrow('withMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP90\')" style="cursor:pointer">With: p90' + sortArrow('withP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP95\')" style="cursor:pointer">With: p95' + sortArrow('withP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutAverage\')" style="cursor:pointer">Without: average' + sortArrow('withoutAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutMedian\')" style="cursor:pointer">Without: median' + sortArrow('withoutMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP90\')" style="cursor:pointer">Without: p90' + sortArrow('withoutP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP95\')" style="cursor:pointer">Without: p95' + sortArrow('withoutP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'averageDifference\')" style="cursor:pointer">Average difference' + sortArrow('averageDifference') + '</th><th class="num" onclick="reasonAnalysisSort(\'medianDifference\')" style="cursor:pointer">Median difference' + sortArrow('medianDifference') + '</th></tr></thead><tbody>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><label>Extreme values <select onchange="reasonAnalysisOutlierMode(this.value)"><option value="include"' + (reasonAnalysisState.outlierMode === 'include' ? ' selected' : '') + '>Include extremes</option><option value="cap-p99"' + (reasonAnalysisState.outlierMode === 'cap-p99' ? ' selected' : '') + '>Cap cohorts at category p99</option></select></label><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="note">IQR extremes are values above Q3 + 3×IQR, calculated separately within each category and reason-status cohort. ' + (reasonAnalysisState.outlierMode === 'cap-p99' ? 'Time values are capped separately at each cohort&apos;s category p99.' : 'All logged values, including zeros, are included in the calculations.') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'outlierCount\')" style="cursor:pointer">IQR extremes W / W/O' + sortArrow('outlierCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withAverage\')" style="cursor:pointer">With: average' + sortArrow('withAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withMedian\')" style="cursor:pointer">With: median' + sortArrow('withMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP90\')" style="cursor:pointer">With: p90' + sortArrow('withP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP95\')" style="cursor:pointer">With: p95' + sortArrow('withP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutAverage\')" style="cursor:pointer">Without: average' + sortArrow('withoutAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutMedian\')" style="cursor:pointer">Without: median' + sortArrow('withoutMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP90\')" style="cursor:pointer">Without: p90' + sortArrow('withoutP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP95\')" style="cursor:pointer">Without: p95' + sortArrow('withoutP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'averageDifference\')" style="cursor:pointer">Average difference' + sortArrow('averageDifference') + '</th><th class="num" onclick="reasonAnalysisSort(\'medianDifference\')" style="cursor:pointer">Median difference' + sortArrow('medianDifference') + '</th></tr></thead><tbody>' +
       (visibleTimeRows.length ? visibleTimeRows.map(row => '<tr><td><button type="button" data-category="' + attr(row.category) + '" onclick="reasonAnalysisToggle(this.dataset.category)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (reasonAnalysisState.expandedCategories.has(row.category) ? '▾ ' : '▸ ') + escHTML(row.category) + '</button></td><td class="num">' + row.withCount.toLocaleString() + '</td><td class="num">' + (100 * row.reasonPercent).toFixed(2) + '%</td><td class="num" style="color:' + (row.outlierCount ? 'var(--red)' : 'var(--text3)') + '">' + row.withOutlierCount.toLocaleString() + ' / ' + row.withoutOutlierCount.toLocaleString() + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withAverage) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withMedian) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP90) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP95) : '—') + '</td><td class="num">' + row.withoutCount.toLocaleString() + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutAverage) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutMedian) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP90) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP95) : '—') + '</td><td class="num" style="color:' + (row.averageDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.averageDifference >= 0 ? '+' : '') + reasonMinutes(row.averageDifference) : '—') + '</td><td class="num" style="color:' + (row.medianDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.withCount && row.withoutCount ? (row.medianDifference >= 0 ? '+' : '') + reasonMinutes(row.medianDifference) : '—') + '</td></tr>' + (reasonAnalysisState.expandedCategories.has(row.category) ? '<tr><td colspan="15">' + expandedDetail(row.category) + '</td></tr>' : '')).join('') : '<tr><td colspan="15">No categories match this search.</td></tr>') +
-      '</tbody></table></div></div></div>';
+      '</tbody>' + totalRow + '</table></div></div></div>';
 
   const catCanvas = document.getElementById('reasonCategoryChart');
   if (catCanvas && topCategories.length) reasonAnalysisCharts.push(new Chart(catCanvas, {
