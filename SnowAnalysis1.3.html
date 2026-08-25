@@ -485,6 +485,11 @@ function getCostCapacityMetrics(opts = {}) {
   };
 }
 
+// Authoritative category-to-business reference, derived from
+// x_toh_gbs_connect_orders(2).xlsx. A single value classifies the category;
+// multiple values defer to the assignment-group code.
+const REFERENCE_CATEGORY_BUSINESS = Object.freeze({"accrual":["GF"],"ap aging report":["FINANCE"],"ap invoice processing":["FINANCE"],"ap invoice upload":["FINANCE"],"ap mdm":["GF"],"ap payment":["FINANCE"],"ar billing":["FINANCE","GF"],"ar mdm":["FINANCE","GF"],"arn":["GF"],"bank reconciliation":["FINANCE"],"billing consolidation":["GL"],"bl drafting":["GL"],"blank billing":["GF"],"bt & st job invoice entry":["GF"],"bt job registration":["GF"],"can validation":["GF"],"cash application":["FINANCE"],"cav e9":["GF"],"chassing document":["GF"],"client rate":["GF"],"coi report":["GF"],"consol":["GF"],"cto & outturn":["GF"],"custom e-docs":["GF"],"dep arv sob":["GF"],"dhr e13":["GF"],"document management":["GF"],"driver safety monitoring":["GL"],"edo":["GF"],"edoc":["GF"],"emerson booking":["GF"],"emerson milestone":["GF"],"emerson rate exchange":["GF"],"final hbl release":["GF"],"freight costing":["FINANCE","GF"],"fx update":["FINANCE"],"gate in date (e5)":["GF"],"gate tally pass e-docs":["GF"],"gou":["GF"],"grn":["GF","GL"],"hbl":["GF"],"incomplete":["GF"],"india orica":["GL"],"indonesia orica":["GL"],"invoicing":["GF"],"irp e3":["GF"],"job profitability":["GF"],"kogan e-docs":["GF"],"malaysia orica":["GL"],"mbl":["FINANCE","GF"],"milestone a&f":["GF"],"milestone e10 pod":["GF"],"milestone e6 e8 (atd and ata)":["GF"],"milestone event 10":["GF"],"milestone vsco":["GF"],"milestone":["GF"],"nine west jones":["GF"],"nl - ams transshipment update":["GF"],"nl - mst warehouse mst update":["GF"],"nra process":["GF"],"organization code validation":["GF"],"outturn":["GF"],"packing tab":["GF"],"po approval":["GF","GL"],"po creation":["GF","GL"],"po gebheiham":["GF"],"po management":["GF"],"po reconciliation":["GF"],"po/pr creation":["GL"],"pod e10":["GF"],"pod retrieval":["GL"],"pod scanning":["GL"],"pre-alert to non toll destination agent":["GF"],"preparing customs form":["GF"],"pvh":["GF"],"query management":["FINANCE"],"quick booking":["GF"],"quotation":["GF"],"reconciliation":["GL"],"registration update":["GL"],"registration":["GF"],"reporting":["FINANCE","GL"],"reporting/closeoff":["GL"],"runsheet creation":["GF","GL"],"runsheet validation":["GL"],"sailing schedule":["GF"],"sales force":["GF"],"security filling":["GF"],"shipment profile report":["GF"],"shipping instruction":["GF"],"sister biling":["GF"],"st job processing":["GF"],"tax invoice":["GF"],"tax issuing invoice":["FINANCE"],"timesheet creation":["GF","GL"],"timesheet validation":["GL"],"tjx - ctn count":["GF"],"tjx - update coo":["GF"],"tjx doc e-docs":["GF"],"tjx- chafta refund":["GF"],"tms - data acceptance":["GL"],"transhipment":["GF"],"travel inquiries":["GL"],"tripsheet validation":["GL"],"validation":["GF"],"vat china":["GF"],"vendor master creation and maintenance (ap)":["GF"],"vendor statement reconciliation":["FINANCE"],"vgm":["GF"],"vsl update":["GF"],"workshop inventory po approval":["GL"],"wtr & xray":["GF"]});
+
 // Business is often missing on individual tickets.  A blank is filled from an
 // unambiguous category map.  For a category that spans businesses, the
 // assignment-group code is the tie-breaker: FN (Finance) takes precedence over
@@ -500,20 +505,20 @@ function getBusinessScope(db) {
   return {
     resolve(category, rawBusiness, assignmentGroup) {
       const tagged = norm(rawBusiness || '').toUpperCase();
-      const values = byCategory.get(norm(category || '').toLowerCase());
+      const key = norm(category || '').toLowerCase();
+      const reference = REFERENCE_CATEGORY_BUSINESS[key];
+      const values = reference ? new Set(reference) : byCategory.get(key);
       const group = ' ' + norm(assignmentGroup || '').toUpperCase().replace(/-/g, ' ') + ' ';
       // FN must be evaluated first because finance assignment groups may also
       // contain GF, for example: "GBS - FN - GF - AU - AP INV B".
       const groupBusiness = /\sFN\s/.test(group) ? 'FINANCE'
         : /\sGL\s/.test(group) ? 'GL'
         : /\sGF\s/.test(group) ? 'GF' : '';
-      // FN and GL identify the owning business even when the source field is
-      // blank or incorrectly says GF. GF resolves an otherwise ambiguous
-      // category, but does not override an explicit Finance/GL source tag.
-      const business = groupBusiness === 'FINANCE' || groupBusiness === 'GL'
-        ? groupBusiness
-        : values && values.size > 1 && groupBusiness === 'GF' ? 'GF'
-        : tagged || (values && values.size === 1 ? [...values][0] : '');
+      // The spreadsheet mapping comes first. Assignment group is only used
+      // when that mapping (or the upload fallback) has more than one value.
+      const business = values && values.size === 1 ? [...values][0]
+        : values && values.size > 1 && groupBusiness ? groupBusiness
+        : tagged || '';
       return { business, excluded: business === 'FINANCE' || business === 'GL' };
     },
   };
@@ -521,18 +526,42 @@ function getBusinessScope(db) {
 
 function applyBusinessScopeToParent(db) {
   const before = queryValue(db, 'SELECT COUNT(*) FROM parent') || 0;
+  runSQL(db, 'DROP TABLE IF EXISTS __reference_business_map');
+  runSQL(db, `CREATE TEMP TABLE __reference_business_map (
+    category_key TEXT, business_count INTEGER, only_business TEXT
+  )`);
+  const referenceInsert = db.prepare('INSERT INTO __reference_business_map VALUES (?,?,?)');
+  for (const [categoryKey, businesses] of Object.entries(REFERENCE_CATEGORY_BUSINESS)) {
+    referenceInsert.bind([categoryKey, businesses.length, businesses.length === 1 ? businesses[0] : '']);
+    referenceInsert.step();
+    referenceInsert.reset();
+  }
+  referenceInsert.free();
+  runSQL(db, 'CREATE INDEX idx_reference_business_map_key ON __reference_business_map(category_key)');
   // Materialise the category map once.  The large-file import has hundreds of
   // thousands of rows; correlated scans here would make the UI appear stuck.
   runSQL(db, 'DROP TABLE IF EXISTS __business_category_map');
   runSQL(db, `CREATE TEMP TABLE __business_category_map AS
+    SELECT category_key, business_count, only_business
+      FROM __reference_business_map
+    UNION ALL
     SELECT LOWER(TRIM(category)) AS category_key,
            COUNT(DISTINCT UPPER(TRIM(business))) AS business_count,
            MAX(UPPER(TRIM(business))) AS only_business
       FROM parent
      WHERE TRIM(COALESCE(category,'')) != ''
        AND TRIM(COALESCE(business,'')) != ''
+       AND LOWER(TRIM(category)) NOT IN (SELECT category_key FROM __reference_business_map)
      GROUP BY LOWER(TRIM(category))`);
   runSQL(db, 'CREATE INDEX idx_business_category_map_key ON __business_category_map(category_key)');
+  // Where the reference has exactly one business, it is authoritative even
+  // when the uploaded row's business field is blank or inconsistent.
+  runSQL(db, `UPDATE parent SET business = (
+      SELECT only_business FROM __reference_business_map r
+      WHERE r.category_key = LOWER(TRIM(parent.category))
+    ) WHERE LOWER(TRIM(category)) IN (
+      SELECT category_key FROM __reference_business_map WHERE business_count = 1
+    )`);
   // Resolve ambiguous categories from their assignment-group code.  FN is
   // intentionally first: a finance group can legitimately contain GF too.
   runSQL(db, `UPDATE parent SET business = CASE
@@ -565,6 +594,7 @@ function applyBusinessScopeToParent(db) {
   runSQL(db, 'DELETE FROM ship_link WHERE number NOT IN (SELECT number FROM parent)');
   runSQL(db, 'DELETE FROM child_ship_link WHERE number NOT IN (SELECT number FROM child)');
   runSQL(db, 'DROP TABLE IF EXISTS __business_category_map');
+  runSQL(db, 'DROP TABLE IF EXISTS __reference_business_map');
   return { before, excluded: backfilled, retained: before - backfilled };
 }
 
