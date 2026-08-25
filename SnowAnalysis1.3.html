@@ -507,8 +507,12 @@ function getBusinessScope(db) {
       const groupBusiness = /\sFN\s/.test(group) ? 'FINANCE'
         : /\sGL\s/.test(group) ? 'GL'
         : /\sGF\s/.test(group) ? 'GF' : '';
-      const business = values && values.size > 1 && groupBusiness
+      // FN and GL identify the owning business even when the source field is
+      // blank or incorrectly says GF. GF resolves an otherwise ambiguous
+      // category, but does not override an explicit Finance/GL source tag.
+      const business = groupBusiness === 'FINANCE' || groupBusiness === 'GL'
         ? groupBusiness
+        : values && values.size > 1 && groupBusiness === 'GF' ? 'GF'
         : tagged || (values && values.size === 1 ? [...values][0] : '');
       return { business, excluded: business === 'FINANCE' || business === 'GL' };
     },
@@ -517,28 +521,42 @@ function getBusinessScope(db) {
 
 function applyBusinessScopeToParent(db) {
   const before = queryValue(db, 'SELECT COUNT(*) FROM parent') || 0;
+  // Materialise the category map once.  The large-file import has hundreds of
+  // thousands of rows; correlated scans here would make the UI appear stuck.
+  runSQL(db, 'DROP TABLE IF EXISTS __business_category_map');
+  runSQL(db, `CREATE TEMP TABLE __business_category_map AS
+    SELECT LOWER(TRIM(category)) AS category_key,
+           COUNT(DISTINCT UPPER(TRIM(business))) AS business_count,
+           MAX(UPPER(TRIM(business))) AS only_business
+      FROM parent
+     WHERE TRIM(COALESCE(category,'')) != ''
+       AND TRIM(COALESCE(business,'')) != ''
+     GROUP BY LOWER(TRIM(category))`);
+  runSQL(db, 'CREATE INDEX idx_business_category_map_key ON __business_category_map(category_key)');
   // Resolve ambiguous categories from their assignment-group code.  FN is
   // intentionally first: a finance group can legitimately contain GF too.
-  runSQL(db, `UPDATE parent AS p SET business = CASE
-      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% FN %' THEN 'FINANCE'
-      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% GL %' THEN 'GL'
-      WHEN (' ' || REPLACE(UPPER(COALESCE(p.agroup,'')),'-',' ') || ' ') LIKE '% GF %' THEN 'GF'
+  runSQL(db, `UPDATE parent SET business = CASE
+      WHEN (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% FN %' THEN 'FINANCE'
+      WHEN (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% GL %' THEN 'GL'
+      WHEN (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% GF %' THEN 'GF'
       ELSE business END
-    WHERE 1 < (SELECT COUNT(DISTINCT UPPER(TRIM(p2.business))) FROM parent p2
-               WHERE LOWER(TRIM(p2.category)) = LOWER(TRIM(p.category))
-                 AND TRIM(COALESCE(p2.business,'')) != '')`);
+    WHERE (
+      (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% FN %'
+      OR (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% GL %'
+      OR (LOWER(TRIM(category)) IN (
+            SELECT category_key FROM __business_category_map WHERE business_count > 1
+          ) AND (' ' || REPLACE(UPPER(COALESCE(agroup,'')),'-',' ') || ' ') LIKE '% GF %')
+    )`);
   // Retag remaining blanks from the loaded population only where the category
   // map is unambiguous.  This keeps the rule fully data-driven for every upload.
-  runSQL(db, `UPDATE parent AS p SET business = (
-      SELECT MAX(UPPER(TRIM(p2.business))) FROM parent p2
-      WHERE LOWER(TRIM(p2.category)) = LOWER(TRIM(p.category))
-        AND TRIM(COALESCE(p2.business,'')) != ''
+  runSQL(db, `UPDATE parent SET business = (
+      SELECT only_business FROM __business_category_map m
+      WHERE m.category_key = LOWER(TRIM(parent.category))
     )
-    WHERE TRIM(COALESCE(p.business,'')) = ''
-      AND TRIM(COALESCE(p.category,'')) != ''
-      AND 1 = (SELECT COUNT(DISTINCT UPPER(TRIM(p3.business))) FROM parent p3
-               WHERE LOWER(TRIM(p3.category)) = LOWER(TRIM(p.category))
-                 AND TRIM(COALESCE(p3.business,'')) != '')`);
+    WHERE TRIM(COALESCE(business,'')) = ''
+      AND LOWER(TRIM(category)) IN (
+        SELECT category_key FROM __business_category_map WHERE business_count = 1
+      )`);
   const backfilled = queryValue(db, `SELECT COUNT(*) FROM parent
     WHERE UPPER(TRIM(COALESCE(business,''))) IN ('FINANCE','GL')`) || 0;
   runSQL(db, `DELETE FROM parent
@@ -546,6 +564,7 @@ function applyBusinessScopeToParent(db) {
   runSQL(db, 'DELETE FROM child WHERE number NOT IN (SELECT number FROM parent)');
   runSQL(db, 'DELETE FROM ship_link WHERE number NOT IN (SELECT number FROM parent)');
   runSQL(db, 'DELETE FROM child_ship_link WHERE number NOT IN (SELECT number FROM child)');
+  runSQL(db, 'DROP TABLE IF EXISTS __business_category_map');
   return { before, excluded: backfilled, retained: before - backfilled };
 }
 
@@ -568,7 +587,7 @@ const CSV_HEADER_MAP = {
   assignment_group: 'assignment_group', group: 'assignment_group',
   state: 'state', category: 'category',
   sub_category: 'sub_category', subcategory: 'sub_category',
-  business: 'business',
+  business: 'business', gbs_business: 'business',
   open_from: 'open_from', source: 'open_from',
   country: 'country', country_code: 'country',
   email: 'email', mailbox: 'mailbox',
