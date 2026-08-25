@@ -5174,6 +5174,13 @@ if (typeof window !== 'undefined') {
   .reason-math-arrow { display: flex; align-items: center; color: #4f9195; font-size: 1.2rem; font-weight: 700; }
   .capacity-table td, .capacity-table th { vertical-align: top; }
   .capacity-table .calc { color: var(--text2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+  .capacity-sort-button { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; cursor: pointer; }
+  .capacity-sort-button:focus-visible, .capacity-expand-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+  .capacity-expand-button { width: 20px; height: 20px; margin-right: 4px; border: 1px solid #b9d8da; border-radius: 4px; background: #edf8f8; color: #176b72; cursor: pointer; font-size: .7rem; line-height: 1; vertical-align: middle; }
+  .capacity-assignment-detail > td { padding: 0 !important; background: #f7fbfc; }
+  .capacity-assignment-panel { padding: 10px 12px 12px 29px; border-left: 3px solid #4f9195; }
+  .capacity-assignment-panel .gtable { background: #fff; border: 1px solid #d9e9ea; }
+  .capacity-assignment-panel .gtable tbody tr:hover { cursor: default; }
   .capacity-status { white-space: nowrap; font-size: .63rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: #e6f4ea; color: #1e8a4c; }
   .capacity-status.manual { background: #fff7e0; color: #896400; }
   .deck-tag { display: inline-block; margin-left: 5px; padding: 1px 6px; border: 1px solid #b9d8da; border-radius: 9px; color: #176b72; background: #edf8f8; font-size: .6rem; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
@@ -5483,6 +5490,9 @@ function resetAll() {
   quickBookingNoShipmentAnalysisCache.clear();
   reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
+  closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
+  closedIncompleteCategoryExpanded.clear();
+  closedIncompleteCategorySort.key = 'secs'; closedIncompleteCategorySort.dir = 'desc';
   currentPage = 1; currentGroups = []; dashLoaded = false;
   dashboardRenderedRevision = -1;
   rawLoaded = false;
@@ -5510,6 +5520,8 @@ const attr = s => escHTML(s).replace(/\n/g, ' ');
 const capacitySettings = { hoursPerDay: 6.6, workDays: 22, emailMinutes: 2, quickBookingThreshold: 7, reportVolume: 19300, reportMinutes: 5, afterShiftHours: 595 };
 let capacityLoaded = false;
 const closedIncompleteDrill = { dimension: '', value: '' };
+const closedIncompleteCategoryExpanded = new Set();
+const closedIncompleteCategorySort = { key: 'secs', dir: 'desc' };
 const capNum = (n, digits = 1) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const capHours = secs => Number(secs || 0) / 3600;
 function capacityInput(key, value) {
@@ -5521,6 +5533,20 @@ function closedIncompleteDrillSelect(dimension, value) {
     closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
   } else {
     closedIncompleteDrill.dimension = dimension; closedIncompleteDrill.value = value;
+  }
+  renderCapacity();
+}
+function closedIncompleteCategoryToggle(category) {
+  if (closedIncompleteCategoryExpanded.has(category)) closedIncompleteCategoryExpanded.delete(category);
+  else closedIncompleteCategoryExpanded.add(category);
+  renderCapacity();
+}
+function closedIncompleteCategorySortBy(key) {
+  if (closedIncompleteCategorySort.key === key) {
+    closedIncompleteCategorySort.dir = closedIncompleteCategorySort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    closedIncompleteCategorySort.key = key;
+    closedIncompleteCategorySort.dir = key === 'name' ? 'asc' : 'desc';
   }
   renderCapacity();
 }
@@ -5581,10 +5607,47 @@ function renderCapacity() {
     return [...map.values()].sort((a, b) => b.secs - a.secs);
   };
   const categoryRows = aggregate(closedIncompleteDrill.dimension === 'region' ? crossRows.filter(r => r.region === closedIncompleteDrill.value) : crossRows, 'category');
+  const categorySortValue = row => closedIncompleteCategorySort.key === 'name' ? row.name
+    : closedIncompleteCategorySort.key === 'tickets' ? Number(row.tickets || 0)
+    : Number(row.secs || 0);
+  categoryRows.sort((a, b) => {
+    const av = categorySortValue(a), bv = categorySortValue(b);
+    const result = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+    return (closedIncompleteCategorySort.dir === 'asc' ? result : -result) || a.name.localeCompare(b.name);
+  });
   const regionRows = aggregate(closedIncompleteDrill.dimension === 'category' ? crossRows.filter(r => r.category === closedIncompleteDrill.value) : crossRows, 'region');
   const drillButton = (dimension, row) => '<button type="button" onclick="closedIncompleteDrillSelect(\'' + dimension + '\', this.dataset.value)" data-value="' + attr(row.name) + '" style="border:0;background:' + (closedIncompleteDrill.dimension === dimension && closedIncompleteDrill.value === row.name ? 'rgba(0,126,135,.14)' : 'transparent') + ';padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + escHTML(row.name) + '</button>';
   const breakdownRow = (dimension, r) => '<tr><td>' + drillButton(dimension, r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
   const breakdownTotal = (rows, label) => { const totals = rows.reduce((sum, r) => ({ tickets: sum.tickets + r.tickets, secs: sum.secs + r.secs }), { tickets: 0, secs: 0 }); return '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + label + '</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot>'; };
+  const assignmentRowsForCategory = category => {
+    const map = new Map();
+    data.closedIncompleteCategoryRegionInputs.forEach(input => {
+      if ((input.category || 'Uncategorised') !== category) return;
+      const region = regionOf(input.agroup, input.country) || 'Unspecified';
+      if (closedIncompleteDrill.dimension === 'region' && region !== closedIncompleteDrill.value) return;
+      const group = input.agroup || '(unassigned)';
+      const item = map.get(group) || { name: group, regions: new Set(), tickets: 0, secs: 0 };
+      item.regions.add(region); item.tickets += Number(input.tickets || 0); item.secs += Number(input.secs || 0);
+      map.set(group, item);
+    });
+    return [...map.values()].sort((a, b) => b.secs - a.secs || b.tickets - a.tickets || a.name.localeCompare(b.name));
+  };
+  const categoryBreakdownRows = categoryRows.map(r => {
+    const expanded = closedIncompleteCategoryExpanded.has(r.name);
+    const toggle = '<button type="button" class="capacity-expand-button" aria-expanded="' + expanded + '" aria-label="' + (expanded ? 'Collapse' : 'Expand') + ' assignment groups for ' + attr(r.name) + '" onclick="closedIncompleteCategoryToggle(this.dataset.value)" data-value="' + attr(r.name) + '">' + (expanded ? '▾' : '▸') + '</button>';
+    const main = '<tr><td>' + toggle + drillButton('category', r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
+    if (!expanded) return main;
+    const assignments = assignmentRowsForCategory(r.name);
+    const assignmentBody = assignments.map(item => '<tr><td>' + escHTML(item.name) + '</td><td>' + escHTML([...item.regions].sort().join(', ')) + '</td><td class="num">' + item.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(item.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(item.secs)), 2) + ' FTE</td></tr>').join('') || '<tr><td colspan="5">No assignment groups in this scope.</td></tr>';
+    const totals = assignments.reduce((sum, item) => ({ tickets: sum.tickets + item.tickets, secs: sum.secs + item.secs }), { tickets: 0, secs: 0 });
+    const assignmentTable = '<div class="capacity-assignment-panel"><div class="note" style="margin-bottom:6px"><b>' + escHTML(r.name) + '</b> — assignment groups</div><table class="gtable"><thead><tr><th>Assignment group</th><th>Region</th><th class="num">Tickets</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + assignmentBody + '</tbody><tfoot><tr style="background:rgba(18,50,74,.06);font-weight:700"><td colspan="2">Assignment-group total</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot></table></div>';
+    return main + '<tr class="capacity-assignment-detail"><td colspan="4">' + assignmentTable + '</td></tr>';
+  }).join('');
+  const categorySortHeader = (label, key, numeric = false) => {
+    const active = closedIncompleteCategorySort.key === key;
+    const arrow = active ? (closedIncompleteCategorySort.dir === 'asc' ? '▲' : '▼') : '↕';
+    return '<th class="' + (numeric ? 'num' : '') + '" aria-sort="' + (active ? (closedIncompleteCategorySort.dir === 'asc' ? 'ascending' : 'descending') : 'none') + '"><button type="button" class="capacity-sort-button" onclick="closedIncompleteCategorySortBy(\'' + key + '\')">' + label + ' <span aria-hidden="true">' + arrow + '</span></button></th>';
+  };
   const modeWasteTableRows = modeWasteRows.map(item => {
     const formula = '(' + capNum(item.overTwoMin, 2) + ' − ' + capNum(item.twoOrFewerMin, 2) + ') × ' + Number(item.row.jobs_over_two || 0).toLocaleString() + ' ÷ 60';
     return '<tr><td><b>' + item.row.mode + '</b></td><td class="num">' + Number(item.row.jobs_over_two || 0).toLocaleString() + '</td><td class="num">' + Number(item.row.jobs_two_or_fewer || 0).toLocaleString() + '</td><td class="num">' + capNum(item.overTwoMin, 2) + ' min</td><td class="num">' + capNum(item.twoOrFewerMin, 2) + ' min</td><td class="calc">' + formula + '</td><td class="num">' + capNum(item.hours) + ' h</td><td class="num"><b>' + capNum(fte(item.hours), 2) + ' FTE</b></td></tr>';
@@ -5642,7 +5705,7 @@ function renderCapacity() {
       row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
       row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
     '</tbody></table></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Click a category to show its region split. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Category</th><th class="num">Tickets</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (categoryRows.map(r => breakdownRow('category', r)).join('') || '<tr><td colspan="4">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
+    '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Use the caret to expand a category into assignment groups. Click the category name to show its region split, and click any column heading to sort. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' + categorySortHeader('Category', 'name') + categorySortHeader('Tickets', 'tickets', true) + categorySortHeader('Logged effort', 'secs', true) + categorySortHeader('FTE', 'fte', true) + '</tr></thead><tbody>' + (categoryBreakdownRows || '<tr><td colspan="4">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
     '<div class="chart-card"><h3>Closed Incomplete — by region ' + deckTag('32') + '</h3><div class="note">Click a region to show its category split. Region is derived from assignment group and country. ' + (closedIncompleteDrill.dimension === 'category' ? 'Showing regions for category “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'category\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (regionRows.map(r => breakdownRow('region', r)).join('') || '<tr><td colspan="4">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(regionRows, closedIncompleteDrill.dimension === 'category' ? 'Total (selected category)' : 'Total (all regions)') + '</table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full capacity-qb"><h3>Quick Booking — live country comparison ' + deckTag('15') + '</h3><div class="note">Derived from category = Quick Booking in the uploaded CSV. “Over threshold” uses the editable threshold above and time_worked.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country</th><th class="num">Tickets</th><th class="num">Average time</th><th class="num">Over threshold</th><th class="num">Logged effort</th></tr></thead><tbody>' + qbRows + '</tbody></table></div></div></div>';
   capacityLoaded = true;
