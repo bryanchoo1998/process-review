@@ -470,24 +470,28 @@ function getCostCapacityMetrics(opts = {}) {
   const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
   const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
   const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
-  const multipleCheckWaste = one(`WITH milestone_checks AS (
-      SELECT p.number, p.consol_key, p.opened_ts, p.time_worked,
+  const milestoneModeWaste = queryAll(db, `WITH milestone_checks AS (
+      SELECT p.number, p.consol_key, p.time_worked,
+             CASE
+               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'export air' THEN 'Export Air'
+               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'export sea' THEN 'Export Sea'
+               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'import air' THEN 'Import Air'
+               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'import sea' THEN 'Import Sea'
+               ELSE 'Other'
+             END AS mode,
              COALESCE(NULLIF(TRIM(p.consol_key),''),
                (SELECT MIN(sl.sid) FROM ship_link sl WHERE sl.number = p.number),
                p.number) AS job_key
         FROM parent p
        WHERE LOWER(TRIM(COALESCE(p.category,''))) = 'milestone e6 e8 (atd and ata)'${groupSql}
-    ), ranked_checks AS (
-      SELECT *, ROW_NUMBER() OVER (
-        PARTITION BY job_key
-        ORDER BY CASE WHEN opened_ts IS NULL THEN 1 ELSE 0 END, opened_ts, number
-      ) AS check_no
-        FROM milestone_checks
-    ) SELECT COUNT(*) AS tickets, COUNT(DISTINCT job_key) AS jobs,
-             COUNT(DISTINCT CASE WHEN check_no > 2 THEN job_key END) AS jobs_over_two,
-             SUM(CASE WHEN check_no > 2 THEN 1 ELSE 0 END) AS extra_checks,
-             COALESCE(SUM(CASE WHEN check_no > 2 THEN time_worked ELSE 0 END),0) AS secs
-        FROM ranked_checks`, groupArgs);
+    ), job_rollup AS (
+      SELECT mode, job_key, SUM(time_worked) AS secs
+        FROM milestone_checks GROUP BY mode, job_key
+    ) SELECT mode, COUNT(*) AS jobs, COALESCE(SUM(secs),0) AS secs,
+             COALESCE(AVG(secs),0) AS avg_secs
+        FROM job_rollup
+       WHERE mode != 'Other'
+       GROUP BY mode`, groupArgs);
   const closedIncompleteCategoryRegionInputs = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
             COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country,
@@ -498,7 +502,7 @@ function getCostCapacityMetrics(opts = {}) {
   return {
     available: true,
     scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
-    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, multipleCheckWaste, closedIncompleteCategoryRegionInputs, quickBooking,
+    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, milestoneModeWaste, closedIncompleteCategoryRegionInputs, quickBooking,
     tickets: Number(duplicate.total_parents || 0),
   };
 }
@@ -5431,8 +5435,20 @@ function renderCapacity() {
   const closedIncompleteFte = fte(closedIncompleteHours);
   const emailFte = fte(emailHours);
   const reportFte = fte(reportHours);
-  const multipleCheckWasteHours = capHours(data.multipleCheckWaste.secs);
+  const milestoneModes = new Map((data.milestoneModeWaste || []).map(r => [r.mode, r]));
+  const mode = name => milestoneModes.get(name) || { mode: name, jobs: 0, secs: 0, avg_secs: 0 };
+  const exportAir = mode('Export Air'), exportSea = mode('Export Sea');
+  const importAir = mode('Import Air'), importSea = mode('Import Sea');
+  const exportAirGapMin = Math.max(0, (Number(exportAir.avg_secs) - Number(exportSea.avg_secs)) / 60);
+  const importAirGapMin = Math.max(0, (Number(importAir.avg_secs) - Number(importSea.avg_secs)) / 60);
+  const multipleCheckWasteHours = (exportAirGapMin * Number(exportAir.jobs) + importAirGapMin * Number(importAir.jobs)) / 60;
   const multipleCheckWasteFte = fte(multipleCheckWasteHours);
+  const modeWasteRows = [
+    { row: exportSea, baseline: 'Export Sea', gap: 0, hours: 0 },
+    { row: exportAir, baseline: 'Export Sea', gap: exportAirGapMin, hours: exportAirGapMin * Number(exportAir.jobs) / 60 },
+    { row: importSea, baseline: 'Import Sea', gap: 0, hours: 0 },
+    { row: importAir, baseline: 'Import Sea', gap: importAirGapMin, hours: importAirGapMin * Number(importAir.jobs) / 60 },
+  ];
   const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + reportFte + multipleCheckWasteFte;
   const deckFloorDelta = revisedSizedFloor - 83.1;
   const qbRows = data.quickBooking.map(r => {
@@ -5460,6 +5476,11 @@ function renderCapacity() {
   const drillButton = (dimension, row) => '<button type="button" onclick="closedIncompleteDrillSelect(\'' + dimension + '\', this.dataset.value)" data-value="' + attr(row.name) + '" style="border:0;background:' + (closedIncompleteDrill.dimension === dimension && closedIncompleteDrill.value === row.name ? 'rgba(0,126,135,.14)' : 'transparent') + ';padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + escHTML(row.name) + '</button>';
   const breakdownRow = (dimension, r) => '<tr><td>' + drillButton(dimension, r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
   const breakdownTotal = (rows, label) => { const totals = rows.reduce((sum, r) => ({ tickets: sum.tickets + r.tickets, secs: sum.secs + r.secs }), { tickets: 0, secs: 0 }); return '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + label + '</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot>'; };
+  const modeWasteTableRows = modeWasteRows.map(item => {
+    const avgMin = Number(item.row.avg_secs || 0) / 60;
+    const formula = item.gap ? '(' + capNum(avgMin, 2) + ' − ' + capNum(avgMin - item.gap, 2) + ') × ' + Number(item.row.jobs || 0).toLocaleString() + ' ÷ 60' : 'Baseline for ' + item.baseline;
+    return '<tr><td><b>' + item.row.mode + '</b></td><td>' + item.baseline + '</td><td class="num">' + Number(item.row.jobs || 0).toLocaleString() + '</td><td class="num">' + capNum(avgMin, 2) + ' min</td><td class="calc">' + formula + '</td><td class="num">' + capNum(item.hours) + ' h</td><td class="num"><b>' + capNum(fte(item.hours), 2) + ' FTE</b></td></tr>';
+  }).join('');
   const deckTag = slide => '<span class="deck-tag">Slide ' + slide + '</span>';
   const row = (name, slide, source, formula, hours, result, status, note) => '<tr><td><b>' + name + '</b>' + deckTag(slide) + '<br><span class="dup-pct">' + source + '</span></td><td class="calc">' + formula + '</td><td class="num">' + (hours == null ? '—' : capNum(hours) + ' h') + '</td><td class="num"><b>' + (result == null ? '—' : capNum(result, 2) + ' FTE') + '</b></td><td><span class="capacity-status' + (status === 'CSV calculated' ? '' : ' manual') + '">' + status + '</span><br><span class="dup-pct">' + note + '</span></td></tr>';
   host.innerHTML =
@@ -5483,7 +5504,7 @@ function renderCapacity() {
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' checks after the 2nd / job</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">Air average gap vs Sea, by direction</div></div>' +
       '<div class="reason-math-arrow">=</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Revised sized floor</div><div class="reason-math-value">' + capNum(revisedSizedFloor, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(deckFloorDelta, 2) + ' FTE vs 83.1 deck floor</div></div>' +
     '</div></div>' +
@@ -5496,11 +5517,12 @@ function renderCapacity() {
       '<div class="reason-math-arrow">÷ ' + capNum(monthlyHours) + '</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Capacity impact</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(reasonImpactHours) + ' hours ÷ ' + capNum(monthlyHours) + ' h/FTE</div></div>' +
     '</div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Multiple Check Waste — average time by mode ' + deckTag('32') + '</h3><div class="note">Each Milestone E6/E8 job is a consol ID; where absent, the first linked shipment ID. Export Air is compared with Export Sea; Import Air is compared with Import Sea. Sea is the baseline within each direction.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Area</th><th>Baseline</th><th class="num">Jobs</th><th class="num">Average / job</th><th>Calculation</th><th class="num">Additional hours</th><th class="num">FTE</th></tr></thead><tbody>' + modeWasteTableRows + '</tbody><tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td colspan="5">Total average-time waste</td><td class="num">' + capNum(multipleCheckWasteHours) + ' h</td><td class="num">' + capNum(multipleCheckWasteFte, 2) + ' FTE</td></tr></tfoot></table></div></div></div>' +
     '<div class="kpi-row capacity-kpis">' +
       '<div class="kpi info"><div class="kpi-label">Uploaded tickets</div><div class="kpi-value">' + Number(data.tickets || 0).toLocaleString() + '</div><div class="kpi-sub">Current CSV / team scope</div></div>' +
       '<div class="kpi"><div class="kpi-label">Reason-coded SI effort ' + deckTag('19') + '</div><div class="kpi-value">' + capNum(fte(siHours), 2) + ' FTE</div><div class="kpi-sub">' + capNum(siHours) + ' logged hours</div></div>' +
       '<div class="kpi"><div class="kpi-label">Closed Incomplete handling ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(fte(closedIncompleteHours), 2) + ' FTE</div><div class="kpi-sub">' + Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets · ' + capNum(closedIncompleteHours) + ' logged hours</div></div>' +
-      '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' checks after the 2nd / job</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">Export Air vs Sea; Import Air vs Sea</div></div>' +
       '<div class="kpi"><div class="kpi-label">Report generation model ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(fte(reportHours), 2) + ' FTE</div><div class="kpi-sub">Editable report-volume assumption</div></div>' +
     '</div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
@@ -5508,7 +5530,7 @@ function renderCapacity() {
       row('Closed Incomplete handling', '32', Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets where state = Closed Incomplete', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' h/FTE', closedIncompleteHours, fte(closedIncompleteHours), 'CSV calculated', 'Proxy: assumes every Closed Incomplete ticket is duplicate/irrelevant') +
       row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
       row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
-      row('Multiple Check Waste — Milestone E6/E8', '32', Number(data.multipleCheckWaste.jobs_over_two || 0).toLocaleString() + ' jobs with >2 checks; ' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' extra checks', 'SUM(time_worked after the 2nd check per consol / shipment job) ÷ 3,600 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Job key: consol ID; where absent, first linked shipment ID; ordered by opened time') +
+      row('Multiple Check Waste — Milestone E6/E8', '32', Number(exportAir.jobs || 0).toLocaleString() + ' Export Air jobs; ' + Number(importAir.jobs || 0).toLocaleString() + ' Import Air jobs', '(Air average − Sea average) × Air jobs ÷ 60 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Pairs Export Air with Export Sea and Import Air with Import Sea') +
       row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
       row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
     '</tbody></table></div></div></div>' +
