@@ -442,6 +442,131 @@ const DGA_DDL = `CREATE TABLE dup_group_agroup (consol_key TEXT, agroup TEXT)`;
 const DGS_DDL = `CREATE TABLE dup_group_source (consol_key TEXT, source TEXT)`;
 
 // ── Cost & Capacity — live aggregates from the uploaded CSV ───────────────
+let milestoneCapacityCacheDB = null;
+let milestoneCapacityCache = new Map();
+
+function clearMilestoneCapacityCache() {
+  milestoneCapacityCacheDB = null;
+  milestoneCapacityCache.clear();
+}
+
+// Return one compact row per Milestone Shipment ID. This deliberately mirrors
+// Shipment Analysis without materialising every linked ticket as a JavaScript
+// object—a large temporary allocation that previously made tab switching
+// unstable on the 390k-row production extract.
+function getMilestoneShipmentModeWaste(groups = []) {
+  const db = getPrimaryDB();
+  if (milestoneCapacityCacheDB !== db) {
+    milestoneCapacityCacheDB = db;
+    milestoneCapacityCache.clear();
+  }
+  const selectedGroups = [...new Set((groups || []).filter(Boolean))].sort();
+  const cacheKey = JSON.stringify(selectedGroups);
+  if (milestoneCapacityCache.has(cacheKey)) return milestoneCapacityCache.get(cacheKey);
+
+  const parentColumns = new Set(tableColumns(db, 'parent'));
+  const childColumns = hasTable(db, 'child') ? new Set(tableColumns(db, 'child')) : new Set();
+  const parentHasNaShipmentMarker = parentColumns.has('has_na_shipment_id');
+  const childHasNaShipmentMarker = childColumns.has('has_na_shipment_id');
+  const parentNaShipmentPredicate = parentHasNaShipmentMarker
+    ? 'p.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = p.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
+  const childNaShipmentPredicate = childHasNaShipmentMarker
+    ? 'c.has_na_shipment_id = 1'
+    : hasTable(db, 'tasks')
+      ? `EXISTS (SELECT 1 FROM tasks t WHERE t.number = c.number
+           AND UPPER(TRIM(COALESCE(t.shipment_id, ''))) IN ('NA', 'N/A'))`
+      : '0';
+  const childRowsSql = hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+    ? `SELECT csl.sid AS shipment_id, 'child:' || c.number AS ticket_key,
+              c.number, c.opened_ts, c.category, c.time_worked, c.agroup
+       FROM child c JOIN child_ship_link csl ON csl.number = c.number`
+    : `SELECT NULL AS shipment_id, '' AS ticket_key, '' AS number,
+              NULL AS opened_ts, '' AS category, 0 AS time_worked, '' AS agroup WHERE 0`;
+  const consolFallbackParentRowsSql = parentNaShipmentPredicate !== '0'
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || p.consol_key AS shipment_id, 'parent:' || p.number AS ticket_key,
+              p.number, p.opened_ts, p.category, p.time_worked, p.agroup
+       FROM parent p
+       WHERE p.consol_key IS NOT NULL AND p.consol_key != ''
+         AND UPPER(TRIM(p.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
+         AND ${parentNaShipmentPredicate}
+         ${parentHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM ship_link sl WHERE sl.number = p.number)'}`
+    : '';
+  const consolFallbackChildRowsSql = childNaShipmentPredicate !== '0' && hasTable(db, 'child') && hasTable(db, 'child_ship_link')
+    ? `UNION ALL
+       SELECT 'CONSOL: ' || c.consol_key AS shipment_id, 'child:' || c.number AS ticket_key,
+              c.number, c.opened_ts, c.category, c.time_worked, c.agroup
+       FROM child c
+       WHERE c.consol_key IS NOT NULL AND c.consol_key != ''
+         AND UPPER(TRIM(c.consol_key)) NOT IN ('NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', '-')
+         AND ${childNaShipmentPredicate}
+         ${childHasNaShipmentMarker ? '' : 'AND NOT EXISTS (SELECT 1 FROM child_ship_link csl WHERE csl.number = c.number)'}`
+    : '';
+  const groupSql = selectedGroups.length
+    ? ' AND sr.agroup IN (' + selectedGroups.map(() => '?').join(',') + ')'
+    : '';
+  const shipmentRows = queryAll(db, `WITH source_rows AS (
+       SELECT sl.sid AS shipment_id, 'parent:' || p.number AS ticket_key,
+              p.number, p.opened_ts, p.category, p.time_worked, p.agroup
+       FROM parent p JOIN ship_link sl ON sl.number = p.number
+       WHERE sl.sid IS NOT NULL AND sl.sid != ''
+       UNION ALL
+       ${childRowsSql}
+       ${consolFallbackParentRowsSql}
+       ${consolFallbackChildRowsSql}
+     ), shipment_counts AS (
+       SELECT ticket_key, COUNT(DISTINCT shipment_id) AS shipment_count
+       FROM source_rows GROUP BY ticket_key
+     ), filtered_rows AS (
+       SELECT sr.*, sr.time_worked * 1.0 / sc.shipment_count AS allocated_secs
+       FROM source_rows sr JOIN shipment_counts sc ON sc.ticket_key = sr.ticket_key
+       WHERE sr.category = 'Milestone E6 E8 (ATD and ATA)'${groupSql}
+     ), ranked_rows AS (
+       SELECT fr.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY shipment_id
+                ORDER BY COALESCE(opened_ts, -9223372036854775808) DESC, number DESC
+              ) AS recency_rank
+       FROM filtered_rows fr
+     )
+     SELECT shipment_id, COUNT(*) AS ticket_count,
+            COALESCE(SUM(allocated_secs),0) AS total_secs,
+            COALESCE(MAX(CASE WHEN recency_rank = 1 THEN agroup END),'') AS assignment_group
+       FROM ranked_rows GROUP BY shipment_id`, selectedGroups);
+
+  const modeMap = {
+    export_air: 'Export Air', export_sea: 'Export Sea',
+    import_air: 'Import Air', import_sea: 'Import Sea',
+  };
+  const rollup = new Map(Object.values(modeMap).map(mode => [mode, {
+    mode, jobs: 0, jobs_over_two: 0, jobs_two_or_fewer: 0,
+    over_two_secs: 0, two_or_fewer_secs: 0, secs: 0,
+  }]));
+  for (const shipment of shipmentRows) {
+    const mode = modeMap[milestoneAssignmentFlow(shipment.assignment_group)];
+    if (!mode) continue;
+    const bucket = rollup.get(mode);
+    const secs = Math.max(0, Number(shipment.total_secs) || 0);
+    bucket.jobs += 1; bucket.secs += secs;
+    if (Number(shipment.ticket_count) > 2) {
+      bucket.jobs_over_two += 1; bucket.over_two_secs += secs;
+    } else {
+      bucket.jobs_two_or_fewer += 1; bucket.two_or_fewer_secs += secs;
+    }
+  }
+  const result = [...rollup.values()].map(bucket => ({
+    ...bucket,
+    avg_over_two_secs: bucket.jobs_over_two ? bucket.over_two_secs / bucket.jobs_over_two : 0,
+    avg_two_or_fewer_secs: bucket.jobs_two_or_fewer ? bucket.two_or_fewer_secs / bucket.jobs_two_or_fewer : 0,
+  }));
+  milestoneCapacityCache.set(cacheKey, result);
+  return result;
+}
+
 // This deliberately uses the parent table created from the user-uploaded CSV.
 // Each metric exposes its input and formula in the UI; fields the extract cannot
 // provide (report workload and after-shift hours) remain user-editable inputs.
@@ -470,38 +595,7 @@ function getCostCapacityMetrics(opts = {}) {
   const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
   const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
   const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
-  // Use the same Shipment-ID grouping and time-allocation method as Shipment
-  // Analysis. A ticket linked to several shipment IDs shares its logged time
-  // across those IDs; this makes the capacity table reconcile to the E6/E8
-  // Shipment-ID view rather than to a separate consol-level calculation.
-  const milestoneModeMap = {
-    export_air: 'Export Air', export_sea: 'Export Sea',
-    import_air: 'Import Air', import_sea: 'Import Sea',
-  };
-  const milestoneModeRollup = new Map();
-  for (const name of Object.values(milestoneModeMap)) {
-    milestoneModeRollup.set(name, { mode: name, jobs: 0, jobs_over_two: 0, jobs_two_or_fewer: 0, over_two_secs: 0, two_or_fewer_secs: 0, secs: 0 });
-  }
-  const milestoneShipmentItems = shipmentItemsFromRows(getShipmentAnalysisRows({
-    category: 'Milestone E6 E8 (ATD and ATA)', agroups: groups,
-  }));
-  for (const item of milestoneShipmentItems) {
-    const mode = milestoneModeMap[milestoneAssignmentFlow(item.assignment_group)];
-    if (!mode) continue;
-    const bucket = milestoneModeRollup.get(mode);
-    const secs = Math.max(0, Number(item.total_secs) || 0);
-    bucket.jobs += 1; bucket.secs += secs;
-    if (Number(item.ticket_count) > 2) {
-      bucket.jobs_over_two += 1; bucket.over_two_secs += secs;
-    } else {
-      bucket.jobs_two_or_fewer += 1; bucket.two_or_fewer_secs += secs;
-    }
-  }
-  const milestoneModeWaste = [...milestoneModeRollup.values()].map(bucket => ({
-    ...bucket,
-    avg_over_two_secs: bucket.jobs_over_two ? bucket.over_two_secs / bucket.jobs_over_two : 0,
-    avg_two_or_fewer_secs: bucket.jobs_two_or_fewer ? bucket.two_or_fewer_secs / bucket.jobs_two_or_fewer : 0,
-  }));
+  const milestoneModeWaste = getMilestoneShipmentModeWaste(groups);
   const closedIncompleteCategoryRegionInputs = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
             COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country,
@@ -2805,6 +2899,7 @@ function clearShipmentAnalysisRowsCache() {
   shipmentAnalysisRowsCache = new Map();
   shipmentAnalysisRowsCacheDB = null;
   shipmentAnalysisRowsCacheRowCount = 0;
+  clearMilestoneCapacityCache();
 }
 
 function getShipmentAnalysisRows(filters = {}) {
