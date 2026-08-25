@@ -4785,7 +4785,7 @@ if (typeof window !== 'undefined') {
 
   /* ── App Layout ── */
   .app { display: flex; height: calc(100vh - 48px); }
-  .sidebar { width: 380px; min-width: 380px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width .2s ease, min-width .2s ease, border-color .2s ease; }
+  .sidebar { width: 240px; min-width: 240px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width .2s ease, min-width .2s ease, border-color .2s ease; }
   .app.sidebar-collapsed .sidebar { width: 0; min-width: 0; border-right-color: transparent; pointer-events: none; }
   .sidebar-toggle { white-space: nowrap; }
   .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); }
@@ -4916,6 +4916,10 @@ if (typeof window !== 'undefined') {
   .tabs { display: flex; padding: 8px 12px 0; gap: 4px; }
   .tab { padding: 6px 14px; border: 1px solid var(--border); background: #fff; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.8rem; border-bottom: none; }
   .tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .sidebar-nav { flex-direction: column; padding: 12px; gap: 7px; }
+  .sidebar-nav .tab { width: 100%; padding: 9px 11px; border-radius: 6px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 600; }
+  .sidebar-nav .tab:hover { border-color: var(--blue); color: var(--blue); }
+  .sidebar-nav .tab.active:hover { color: #fff; }
   .dup-list { flex: 1; overflow-y: auto; }
   .dup-item { padding: 9px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
   .dup-item:hover { background: #e8f0fe; }
@@ -5225,58 +5229,12 @@ if (typeof window !== 'undefined') {
 <!-- ═══ App ═══ -->
 <div class="app" id="appContainer">
   <div class="sidebar" id="sidebar" style="display:none">
-    <div class="sidebar-header"><h1>Duplicate Consols</h1><p>Click a consol to inspect its duplicate emails</p></div>
-    <div class="filters">
-      <input type="text" id="searchInput" placeholder="Search consol or ORD..." onkeyup="doSearch(this.value)">
-      <div class="multi-select" id="groupFilterWrap">
-        <div class="ms-input-wrap" onclick="event.stopPropagation();openGroupDropdown()">
-          <div class="ms-chips" id="groupChips"></div>
-          <input type="text" id="groupFilterInput" placeholder="Filter by assignment group..."
-                 autocomplete="off" oninput="onGroupQuery(this.value)"
-                 onkeydown="onGroupKey(event)" onclick="event.stopPropagation();openGroupDropdown()">
-        </div>
-        <div class="ms-dropdown" id="groupDropdown" style="display:none"></div>
-      </div>
-      <div class="multi-select" id="assigneeFilterWrap">
-        <div class="ms-input-wrap" onclick="event.stopPropagation();openAssigneeDropdown()">
-          <div class="ms-chips" id="assigneeChips"></div>
-          <input type="text" id="assigneeFilterInput" placeholder="Filter by assignee..."
-                 autocomplete="off" oninput="onAssigneeQuery(this.value)"
-                 onkeydown="onAssigneeKey(event)" onclick="event.stopPropagation();openAssigneeDropdown()">
-        </div>
-        <div class="ms-dropdown" id="assigneeDropdown" style="display:none"></div>
-      </div>
-      <select id="sourceSel" onchange="loadDupList(1)"><option value="">All sources (open from)</option></select>
-      <select id="basisSel" onchange="loadDupList(1)">
-        <option value="">Any match basis</option>
-        <option value="content">Content-verified only</option>
-        <option value="unverified">No content (category + source)</option>
-      </select>
-      <select id="patternSel" onchange="loadDupList(1)">
-        <option value="">Any arrival pattern</option>
-        <option value="fanout">Fan-out — several teams at once</option>
-        <option value="rapid">Rapid repeat — one team, quick succession</option>
-        <option value="spread">Spread over time</option>
-      </select>
-      <select id="sortSel" onchange="loadDupList(1)">
-        <option value="count">Sort: most rows</option>
-        <option value="hours">Sort: most hours</option>
-        <option value="clusters">Sort: most clusters</option>
-        <option value="recent">Sort: most recent</option>
-        <option value="span">Sort: longest span</option>
-        <option value="emails">Sort: most senders</option>
-        <option value="groups">Sort: most teams</option>
-      </select>
-      <div class="filter-meta"><span id="filterMeta"></span><button onclick="clearFilters()">Clear</button></div>
-    </div>
-    <div class="tabs">
-      <div class="tab active" onclick="switchTab('duplicates')">Consols</div>
-      <div class="tab" onclick="switchTab('dashboard')">Dashboard</div>
-      <div class="tab" onclick="switchTab('capacity')">Cost &amp; Capacity</div>
-      <div class="tab" onclick="switchTab('raw')">Raw Data</div>
-    </div>
-    <div class="dup-list" id="dupList"></div>
-    <div class="pagination" id="pagination"></div>
+    <div class="sidebar-header"><h1>Process Review</h1><p>CSV-based operational analysis</p></div>
+    <nav class="tabs sidebar-nav" aria-label="Analysis sections">
+      <button type="button" class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</button>
+      <button type="button" class="tab" data-tab="capacity" onclick="switchTab('capacity')">Cost &amp; Capacity</button>
+      <button type="button" class="tab" data-tab="raw" onclick="switchTab('raw')">Raw Data</button>
+    </nav>
   </div>
 
   <div class="main" id="mainContent">
@@ -5444,8 +5402,8 @@ function onDataReady() {
   setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
   resetBtn.style.display = 'inline-block';
   document.getElementById('downloadBtn').style.display = 'inline-block';
-  // Show the consol list in sidebar (class-based, so tabs can hide it again)
-  switchTab('duplicates');
+  // Open the primary management view as soon as the uploaded data is ready.
+  switchTab('dashboard');
   // Re-render the dashboard if it was already opened (data may have changed
   // after a multi-file merge)
   dashLoaded = false;
@@ -5467,9 +5425,6 @@ function onDataReady() {
   reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   modeState.mode = 'all';
-  loadGroups();
-  loadAssignees();
-  loadDupList(1);
 }
 
 function resetAll() {
@@ -5484,13 +5439,11 @@ function resetAll() {
   emptyState.style.display = 'flex';
   resetBtn.style.display = 'none';
   document.getElementById('downloadBtn').style.display = 'none';
-  document.getElementById('detailView').classList.remove('active');
   document.getElementById('dashView').classList.remove('active');
+  document.getElementById('capacityView').classList.remove('active');
   document.getElementById('rawView').classList.remove('active');
-  document.getElementById('dupList').innerHTML = '';
-  document.getElementById('pagination').innerHTML = '';
-  document.getElementById('detailView').innerHTML = '<div class="detail-empty">&#8592; Upload a file to begin</div>';
   document.getElementById('dashContent').innerHTML = '';
+  document.getElementById('capacityContent').innerHTML = '';
   document.getElementById('rawContent').innerHTML = '';
   shipmentAnalysisOptions = null;
   shipmentAnalysisHotspots = null;
@@ -5730,11 +5683,11 @@ function renderCapacity() {
   capacityLoaded = true;
 }
 
-const TABS = ['duplicates', 'dashboard', 'capacity', 'raw'];
+const TABS = ['dashboard', 'capacity', 'raw'];
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t, i) =>
-    t.classList.toggle('active', TABS[i] === tab));
-  document.getElementById('detailView').classList.toggle('active', tab === 'duplicates');
+  if (!TABS.includes(tab)) tab = 'dashboard';
+  document.querySelectorAll('.sidebar-nav .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tab));
   document.getElementById('dashView').classList.toggle('active', tab === 'dashboard');
   document.getElementById('capacityView').classList.toggle('active', tab === 'capacity');
   document.getElementById('rawView').classList.toggle('active', tab === 'raw');
@@ -5777,7 +5730,8 @@ function openGroupDropdown() { document.getElementById('groupDropdown').style.di
 function closeGroupDropdown() { document.getElementById('groupDropdown').style.display = 'none'; }
 
 document.addEventListener('click', (e) => {
-  if (!document.getElementById('groupFilterWrap').contains(e.target)) closeGroupDropdown();
+  const gw = document.getElementById('groupFilterWrap');
+  if (gw && !gw.contains(e.target)) closeGroupDropdown();
   const aw = document.getElementById('assigneeFilterWrap');
   if (aw && !aw.contains(e.target)) closeAssigneeDropdown();
 });
@@ -5806,8 +5760,6 @@ function renderGroupFilter() {
 function toggleGroup(g) {
   const i = currentGroups.indexOf(g);
   if (i >= 0) currentGroups.splice(i, 1); else currentGroups.push(g);
-  renderGroupFilter();
-  loadDupList(1);
   markDashboardDirty();
   // Every dashboard section is filtered by currentGroups — refresh when on screen
   if (dashLoaded && document.getElementById('dashView').classList.contains('active')) {
@@ -6004,7 +5956,7 @@ async function loadDupList(page = 1) {
 function loadConsol(consolId) {
   const dv = document.getElementById('detailView');
   dv.innerHTML = '<div class="loading">Loading ' + escHTML(consolId) + '...</div>';
-  switchTab('duplicates');
+  switchTab('dashboard');
   document.querySelectorAll('.dup-item').forEach(el => el.classList.remove('active'));
   const item = document.querySelector('[data-consol="' + CSS.escape(consolId) + '"]');
   if (item) item.classList.add('active');
@@ -10357,15 +10309,15 @@ function renderAssigneeSection() {
 }
 
 window.searchFor = function(q) {
-  document.getElementById('searchInput').value = q;
-  switchTab('duplicates');
-  doSearch(q);
+  // The retired Consols view had a dedicated search result list. Keep older
+  // dashboard links safe by taking the user to the remaining data explorer.
+  switchTab('raw');
 };
 
 window.filterByGroup = function(g) {
-  // Toggle semantics: clicking a team row/bubble adds it to the multi-select,
-  // clicking again removes it
-  switchTab('duplicates');
+  // Dashboard drill-ins retain their filtering behaviour without reopening
+  // the retired Consols workflow.
+  switchTab('dashboard');
   toggleGroup(g);
 };
 
