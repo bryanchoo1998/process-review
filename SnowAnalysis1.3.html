@@ -470,32 +470,38 @@ function getCostCapacityMetrics(opts = {}) {
   const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
   const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
   const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
-  const milestoneModeWaste = queryAll(db, `WITH milestone_checks AS (
-      SELECT p.number, p.consol_key, p.time_worked,
-             CASE
-               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'export air' THEN 'Export Air'
-               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'export sea' THEN 'Export Sea'
-               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'import air' THEN 'Import Air'
-               WHEN LOWER(TRIM(COALESCE(p.sub_category,''))) = 'import sea' THEN 'Import Sea'
-               ELSE 'Other'
-             END AS mode,
-             COALESCE(NULLIF(TRIM(p.consol_key),''),
-               (SELECT MIN(sl.sid) FROM ship_link sl WHERE sl.number = p.number),
-               p.number) AS job_key
-        FROM parent p
-       WHERE LOWER(TRIM(COALESCE(p.category,''))) = 'milestone e6 e8 (atd and ata)'${groupSql}
-    ), job_rollup AS (
-      SELECT mode, job_key, COUNT(*) AS check_count, SUM(time_worked) AS secs
-        FROM milestone_checks GROUP BY mode, job_key
-    ) SELECT mode, COUNT(*) AS jobs,
-             COALESCE(SUM(CASE WHEN check_count > 2 THEN 1 ELSE 0 END),0) AS jobs_over_two,
-             COALESCE(SUM(CASE WHEN check_count <= 2 THEN 1 ELSE 0 END),0) AS jobs_two_or_fewer,
-             COALESCE(AVG(CASE WHEN check_count > 2 THEN secs END),0) AS avg_over_two_secs,
-             COALESCE(AVG(CASE WHEN check_count <= 2 THEN secs END),0) AS avg_two_or_fewer_secs,
-             COALESCE(SUM(secs),0) AS secs
-        FROM job_rollup
-       WHERE mode != 'Other'
-       GROUP BY mode`, groupArgs);
+  // Use the same Shipment-ID grouping and time-allocation method as Shipment
+  // Analysis. A ticket linked to several shipment IDs shares its logged time
+  // across those IDs; this makes the capacity table reconcile to the E6/E8
+  // Shipment-ID view rather than to a separate consol-level calculation.
+  const milestoneModeMap = {
+    export_air: 'Export Air', export_sea: 'Export Sea',
+    import_air: 'Import Air', import_sea: 'Import Sea',
+  };
+  const milestoneModeRollup = new Map();
+  for (const name of Object.values(milestoneModeMap)) {
+    milestoneModeRollup.set(name, { mode: name, jobs: 0, jobs_over_two: 0, jobs_two_or_fewer: 0, over_two_secs: 0, two_or_fewer_secs: 0, secs: 0 });
+  }
+  const milestoneShipmentItems = shipmentItemsFromRows(getShipmentAnalysisRows({
+    category: 'Milestone E6 E8 (ATD and ATA)', agroups: groups,
+  }));
+  for (const item of milestoneShipmentItems) {
+    const mode = milestoneModeMap[milestoneAssignmentFlow(item.assignment_group)];
+    if (!mode) continue;
+    const bucket = milestoneModeRollup.get(mode);
+    const secs = Math.max(0, Number(item.total_secs) || 0);
+    bucket.jobs += 1; bucket.secs += secs;
+    if (Number(item.ticket_count) > 2) {
+      bucket.jobs_over_two += 1; bucket.over_two_secs += secs;
+    } else {
+      bucket.jobs_two_or_fewer += 1; bucket.two_or_fewer_secs += secs;
+    }
+  }
+  const milestoneModeWaste = [...milestoneModeRollup.values()].map(bucket => ({
+    ...bucket,
+    avg_over_two_secs: bucket.jobs_over_two ? bucket.over_two_secs / bucket.jobs_over_two : 0,
+    avg_two_or_fewer_secs: bucket.jobs_two_or_fewer ? bucket.two_or_fewer_secs / bucket.jobs_two_or_fewer : 0,
+  }));
   const closedIncompleteCategoryRegionInputs = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
             COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country,
@@ -2814,6 +2820,7 @@ function getShipmentAnalysisRows(filters = {}) {
     category: filters.category || '',
     sub_category: filters.sub_category || '',
     agroup: filters.agroup || '',
+    agroups: Array.isArray(filters.agroups) ? [...filters.agroups].filter(Boolean).sort() : [],
   });
   if (shipmentAnalysisRowsCache.has(cacheKey)) {
     // Refresh recency so the broad/current scopes survive ahead of abandoned
@@ -2827,7 +2834,11 @@ function getShipmentAnalysisRows(filters = {}) {
   const args = [];
   if (filters.category) { clauses.push('category = ?'); args.push(filters.category); }
   if (filters.sub_category) { clauses.push('sub_category = ?'); args.push(filters.sub_category); }
-  if (filters.agroup) { clauses.push('agroup = ?'); args.push(filters.agroup); }
+  if (Array.isArray(filters.agroups) && filters.agroups.filter(Boolean).length) {
+    const agroups = filters.agroups.filter(Boolean);
+    clauses.push('agroup IN (' + agroups.map(() => '?').join(',') + ')');
+    args.push(...agroups);
+  } else if (filters.agroup) { clauses.push('agroup = ?'); args.push(filters.agroup); }
   const where = clauses.length ? clauses.join(' AND ') : '1=1';
   const parentColumns = new Set(tableColumns(db, 'parent'));
   const childColumns = hasTable(db, 'child') ? new Set(tableColumns(db, 'child')) : new Set();
@@ -5506,7 +5517,7 @@ function renderCapacity() {
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">Same-area >2 vs ≤2 checks</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">Same-area Shipment IDs: >2 vs ≤2 tickets</div></div>' +
       '<div class="reason-math-arrow">=</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Revised sized floor</div><div class="reason-math-value">' + capNum(revisedSizedFloor, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(deckFloorDelta, 2) + ' FTE vs 83.1 deck floor</div></div>' +
     '</div></div>' +
@@ -5519,12 +5530,12 @@ function renderCapacity() {
       '<div class="reason-math-arrow">÷ ' + capNum(monthlyHours) + '</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Capacity impact</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(reasonImpactHours) + ' hours ÷ ' + capNum(monthlyHours) + ' h/FTE</div></div>' +
     '</div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>Multiple Check Waste — time gap by check count ' + deckTag('32') + '</h3><div class="note">Each Milestone E6/E8 job is a consol ID; where absent, the first linked shipment ID. Within each area, the calculation is: average job time with more than two checks − average job time with two or fewer checks, then × the number of jobs with more than two checks. No area is used as another area’s baseline.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Area</th><th class="num">Jobs &gt;2 checks</th><th class="num">Jobs ≤2 checks</th><th class="num">Avg/job (&gt;2)</th><th class="num">Avg/job (≤2)</th><th>Calculation</th><th class="num">Additional hours</th><th class="num">FTE</th></tr></thead><tbody>' + modeWasteTableRows + '</tbody><tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td colspan="6">Total average-time waste</td><td class="num">' + capNum(multipleCheckWasteHours) + ' h</td><td class="num">' + capNum(multipleCheckWasteFte, 2) + ' FTE</td></tr></tfoot></table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Multiple Check Waste — time gap by check count ' + deckTag('32') + '</h3><div class="note">This uses the same Shipment-ID method as the Milestone E6/E8 table. When a ticket links to several shipment IDs, its logged time is split equally between them. Within each area, the calculation is: average shipment time with more than two tickets − average shipment time with two or fewer tickets, then × the number of shipment IDs with more than two tickets. No area is used as another area’s baseline.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Area</th><th class="num">Shipment IDs &gt;2 tickets</th><th class="num">Shipment IDs ≤2 tickets</th><th class="num">Avg/shipment (&gt;2)</th><th class="num">Avg/shipment (≤2)</th><th>Calculation</th><th class="num">Additional hours</th><th class="num">FTE</th></tr></thead><tbody>' + modeWasteTableRows + '</tbody><tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td colspan="6">Total average-time waste</td><td class="num">' + capNum(multipleCheckWasteHours) + ' h</td><td class="num">' + capNum(multipleCheckWasteFte, 2) + ' FTE</td></tr></tfoot></table></div></div></div>' +
     '<div class="kpi-row capacity-kpis">' +
       '<div class="kpi info"><div class="kpi-label">Uploaded tickets</div><div class="kpi-value">' + Number(data.tickets || 0).toLocaleString() + '</div><div class="kpi-sub">Current CSV / team scope</div></div>' +
       '<div class="kpi"><div class="kpi-label">Reason-coded SI effort ' + deckTag('19') + '</div><div class="kpi-value">' + capNum(fte(siHours), 2) + ' FTE</div><div class="kpi-sub">' + capNum(siHours) + ' logged hours</div></div>' +
       '<div class="kpi"><div class="kpi-label">Closed Incomplete handling ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(fte(closedIncompleteHours), 2) + ' FTE</div><div class="kpi-sub">' + Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets · ' + capNum(closedIncompleteHours) + ' logged hours</div></div>' +
-      '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">Same-area >2 vs ≤2 checks</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">Same-area Shipment IDs: >2 vs ≤2 tickets</div></div>' +
       '<div class="kpi"><div class="kpi-label">Report generation model ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(fte(reportHours), 2) + ' FTE</div><div class="kpi-sub">Editable report-volume assumption</div></div>' +
     '</div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
@@ -5532,7 +5543,7 @@ function renderCapacity() {
       row('Closed Incomplete handling', '32', Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets where state = Closed Incomplete', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' h/FTE', closedIncompleteHours, fte(closedIncompleteHours), 'CSV calculated', 'Proxy: assumes every Closed Incomplete ticket is duplicate/irrelevant') +
       row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
       row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
-      row('Multiple Check Waste — Milestone E6/E8', '32', modeWasteRows.reduce((sum, item) => sum + Number(item.row.jobs_over_two || 0), 0).toLocaleString() + ' jobs with >2 checks across four areas', '(average job time >2 checks − average job time ≤2 checks) × jobs >2 ÷ 60 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Calculated independently for Export Air, Export Sea, Import Air and Import Sea') +
+      row('Multiple Check Waste — Milestone E6/E8', '32', modeWasteRows.reduce((sum, item) => sum + Number(item.row.jobs_over_two || 0), 0).toLocaleString() + ' shipment IDs with >2 tickets across four areas', '(average shipment time >2 tickets − average shipment time ≤2 tickets) × shipment IDs >2 ÷ 60 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Uses the same Shipment-ID allocation as the Milestone E6/E8 table') +
       row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
       row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
     '</tbody></table></div></div></div>' +
