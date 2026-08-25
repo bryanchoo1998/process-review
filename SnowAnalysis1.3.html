@@ -470,6 +470,24 @@ function getCostCapacityMetrics(opts = {}) {
   const closedIncomplete = metric("LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'");
   const reasonTagged = metric("TRIM(COALESCE(reason,'')) != ''");
   const reasonBlank = metric("TRIM(COALESCE(reason,'')) = ''");
+  const multipleCheckWaste = one(`WITH milestone_checks AS (
+      SELECT p.number, p.consol_key, p.opened_ts, p.time_worked,
+             COALESCE(NULLIF(TRIM(p.consol_key),''),
+               (SELECT MIN(sl.sid) FROM ship_link sl WHERE sl.number = p.number),
+               p.number) AS job_key
+        FROM parent p
+       WHERE LOWER(TRIM(COALESCE(p.category,''))) = 'milestone e6 e8 (atd and ata)'${groupSql}
+    ), ranked_checks AS (
+      SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY job_key
+        ORDER BY CASE WHEN opened_ts IS NULL THEN 1 ELSE 0 END, opened_ts, number
+      ) AS check_no
+        FROM milestone_checks
+    ) SELECT COUNT(*) AS tickets, COUNT(DISTINCT job_key) AS jobs,
+             COUNT(DISTINCT CASE WHEN check_no > 2 THEN job_key END) AS jobs_over_two,
+             SUM(CASE WHEN check_no > 2 THEN 1 ELSE 0 END) AS extra_checks,
+             COALESCE(SUM(CASE WHEN check_no > 2 THEN time_worked ELSE 0 END),0) AS secs
+        FROM ranked_checks`, groupArgs);
   const closedIncompleteCategoryRegionInputs = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(category),''),'Uncategorised') AS category,
             COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country,
@@ -480,7 +498,7 @@ function getCostCapacityMetrics(opts = {}) {
   return {
     available: true,
     scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
-    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, closedIncompleteCategoryRegionInputs, quickBooking,
+    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, multipleCheckWaste, closedIncompleteCategoryRegionInputs, quickBooking,
     tickets: Number(duplicate.total_parents || 0),
   };
 }
@@ -5413,7 +5431,9 @@ function renderCapacity() {
   const closedIncompleteFte = fte(closedIncompleteHours);
   const emailFte = fte(emailHours);
   const reportFte = fte(reportHours);
-  const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + reportFte;
+  const multipleCheckWasteHours = capHours(data.multipleCheckWaste.secs);
+  const multipleCheckWasteFte = fte(multipleCheckWasteHours);
+  const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + reportFte + multipleCheckWasteFte;
   const deckFloorDelta = revisedSizedFloor - 83.1;
   const qbRows = data.quickBooking.map(r => {
     const avgMin = Number(r.avg_secs || 0) / 60;
@@ -5454,7 +5474,7 @@ function renderCapacity() {
       '<label>After-shift hours<input type="number" min="0" step="1" value="' + capacitySettings.afterShiftHours + '" oninput="capacityInput(\'afterShiftHours\',this.value)"></label>' +
       '<span class="scope">Scope: <b>' + escHTML(data.scope) + '</b> · Monthly FTE denominator: <b>' + capNum(monthlyHours) + ' h</b></span></div>' +
     '<div class="capacity-warning"><b>How to read this:</b> green rows are directly calculated from the uploaded CSV. Closed Incomplete is a proxy: it assumes each ticket in that state is duplicate or irrelevant work. Amber rows are formula models that need a business input because ServiceNow does not record CW1 report volume or hours worked outside shift. The rows may overlap; do not sum them as a cost total without reconciling their scopes.</div>' +
-    '<div class="reason-math"><div class="reason-math-head"><div><h3>Revised sized floor — the four Slide 32 components ' + deckTag('32 / 34') + '</h3><div class="note">The deck used 2.1 + 54 + 16 + 11 = 83.1 FTE. This view replaces the two unsupported estimates with the current CSV calculations.</div></div></div><div class="reason-math-flow">' +
+    '<div class="reason-math"><div class="reason-math-head"><div><h3>Revised sized floor — five Slide 32 components ' + deckTag('32 / 34') + '</h3><div class="note">The deck used 2.1 + 54 + 16 + 11 = 83.1 FTE. This view replaces the two unsupported estimates with CSV calculations and adds Multiple Check Waste for Milestone E6/E8.</div></div></div><div class="reason-math-flow">' +
       '<div class="reason-math-step"><div class="reason-math-label">Closed Incomplete</div><div class="reason-math-value">' + capNum(closedIncompleteFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 2.1 · CSV logged time</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Email processing</div><div class="reason-math-value">' + capNum(emailFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.email.tickets || 0).toLocaleString() + ' emails × ' + capNum(capacitySettings.emailMinutes) + ' min</div></div>' +
@@ -5462,6 +5482,8 @@ function renderCapacity() {
       '<div class="reason-math-step"><div class="reason-math-label">Reason timing gap</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 16 · reason timing gap</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
+      '<div class="reason-math-arrow">+</div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' checks after the 2nd / job</div></div>' +
       '<div class="reason-math-arrow">=</div>' +
       '<div class="reason-math-step result"><div class="reason-math-label">Revised sized floor</div><div class="reason-math-value">' + capNum(revisedSizedFloor, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(deckFloorDelta, 2) + ' FTE vs 83.1 deck floor</div></div>' +
     '</div></div>' +
@@ -5478,6 +5500,7 @@ function renderCapacity() {
       '<div class="kpi info"><div class="kpi-label">Uploaded tickets</div><div class="kpi-value">' + Number(data.tickets || 0).toLocaleString() + '</div><div class="kpi-sub">Current CSV / team scope</div></div>' +
       '<div class="kpi"><div class="kpi-label">Reason-coded SI effort ' + deckTag('19') + '</div><div class="kpi-value">' + capNum(fte(siHours), 2) + ' FTE</div><div class="kpi-sub">' + capNum(siHours) + ' logged hours</div></div>' +
       '<div class="kpi"><div class="kpi-label">Closed Incomplete handling ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(fte(closedIncompleteHours), 2) + ' FTE</div><div class="kpi-sub">' + Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets · ' + capNum(closedIncompleteHours) + ' logged hours</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' checks after the 2nd / job</div></div>' +
       '<div class="kpi"><div class="kpi-label">Report generation model ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(fte(reportHours), 2) + ' FTE</div><div class="kpi-sub">Editable report-volume assumption</div></div>' +
     '</div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
@@ -5485,6 +5508,7 @@ function renderCapacity() {
       row('Closed Incomplete handling', '32', Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets where state = Closed Incomplete', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' h/FTE', closedIncompleteHours, fte(closedIncompleteHours), 'CSV calculated', 'Proxy: assumes every Closed Incomplete ticket is duplicate/irrelevant') +
       row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
       row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
+      row('Multiple Check Waste — Milestone E6/E8', '32', Number(data.multipleCheckWaste.jobs_over_two || 0).toLocaleString() + ' jobs with >2 checks; ' + Number(data.multipleCheckWaste.extra_checks || 0).toLocaleString() + ' extra checks', 'SUM(time_worked after the 2nd check per consol / shipment job) ÷ 3,600 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Job key: consol ID; where absent, first linked shipment ID; ordered by opened time') +
       row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
       row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
     '</tbody></table></div></div></div>' +
