@@ -449,6 +449,8 @@ let costCapacityCache = new Map();
 let rawSummaryCacheDB = null;
 let rawSummaryCache = new Map();
 let rawSortIndexDBs = new WeakSet();
+let rawFilterOptionsCacheDB = null;
+let rawFilterOptionsCache = null;
 
 function clearMilestoneCapacityCache() {
   milestoneCapacityCacheDB = null;
@@ -458,6 +460,8 @@ function clearMilestoneCapacityCache() {
   rawSummaryCacheDB = null;
   rawSummaryCache.clear();
   rawSortIndexDBs = new WeakSet();
+  rawFilterOptionsCacheDB = null;
+  rawFilterOptionsCache = null;
 }
 
 // Return one compact row per Milestone Shipment ID. This deliberately mirrors
@@ -3749,6 +3753,45 @@ const RAW_COLS = [
   ['kind', 'Type', "'Parent'"],
 ];
 
+const RAW_MULTI_FILTER_KEYS = new Set(['region', 'country', 'agroup', 'category', 'sub_category', 'state', 'kind']);
+
+function getRawFilterOptions(db) {
+  if (rawFilterOptionsCacheDB === db && rawFilterOptionsCache) return rawFilterOptionsCache;
+  const textValues = field => queryAll(db,
+    `SELECT DISTINCT COALESCE(NULLIF(TRIM(${field}),''),'(blank)') AS value FROM parent ORDER BY value COLLATE NOCASE`)
+    .map(row => String(row.value));
+  const regionPairs = new Map();
+  for (const row of queryAll(db, `SELECT DISTINCT COALESCE(agroup,'') AS agroup, COALESCE(country,'') AS country FROM parent`)) {
+    const value = regionOf(row.agroup, row.country);
+    const pairs = regionPairs.get(value) || [];
+    pairs.push({ agroup: String(row.agroup || ''), country: String(row.country || '') });
+    regionPairs.set(value, pairs);
+  }
+  const countryValues = new Map();
+  for (const row of queryAll(db, `SELECT DISTINCT COALESCE(NULLIF(TRIM(country),''),'(blank)') AS value FROM parent`)) {
+    const rawValue = String(row.value);
+    const displayValue = rawValue === '(blank)' ? rawValue : countryCodeOf(rawValue);
+    const values = countryValues.get(displayValue) || [];
+    values.push(rawValue);
+    countryValues.set(displayValue, values);
+  }
+  rawFilterOptionsCacheDB = db;
+  rawFilterOptionsCache = {
+    options: {
+      region: [...regionPairs.keys()].sort((a, b) => a.localeCompare(b)),
+      country: [...countryValues.keys()].sort((a, b) => a.localeCompare(b)),
+      agroup: textValues('agroup'),
+      category: textValues('category'),
+      sub_category: textValues('sub_category'),
+      state: textValues('state'),
+      kind: ['Parent'],
+    },
+    regionPairs,
+    countryValues,
+  };
+  return rawFilterOptionsCache;
+}
+
 function getRaw(opts = {}) {
   const db = getPrimaryDB();
   // Build the large default-sort index only when Raw Data is first opened.
@@ -3768,6 +3811,7 @@ function getRaw(opts = {}) {
   } = opts;
 
   const cols = Object.fromEntries(RAW_COLS.map(([k, , expr]) => [k, expr]));
+  const rawFilterOptions = getRawFilterOptions(db);
   const sortExpr = cols[sort] || 'p.time_worked';
   const direction = dir === 'asc' ? 'ASC' : 'DESC';
 
@@ -3777,6 +3821,26 @@ function getRaw(opts = {}) {
     // `raw == null || raw === ''` rather than `!raw` so a numeric 0 filter
     // (e.g. hours = 0) is not silently dropped
     if (raw === null || raw === undefined || raw === '') continue;
+    if (Array.isArray(raw)) {
+      const selected = [...new Set(raw.map(value => String(value).trim()).filter(Boolean))];
+      if (!selected.length) continue;
+      if (key === 'region') {
+        const pairs = selected.flatMap(value => rawFilterOptions.regionPairs.get(value) || []);
+        if (!pairs.length) { clauses.push('1 = 0'); continue; }
+        clauses.push('(' + pairs.map(() => '(COALESCE(p.agroup,\'\') = ? AND COALESCE(p.country,\'\') = ?)').join(' OR ') + ')');
+        for (const pair of pairs) args.push(pair.agroup, pair.country);
+      } else if (key === 'country') {
+        const values = [...new Set(selected.flatMap(value => rawFilterOptions.countryValues.get(value) || [value]))];
+        clauses.push(`COALESCE(NULLIF(TRIM(p.country),''),'(blank)') IN (${values.map(() => '?').join(',')})`);
+        args.push(...values);
+      } else if (key === 'kind') {
+        if (!selected.includes('Parent')) clauses.push('1 = 0');
+      } else {
+        clauses.push(`${expr} IN (${selected.map(() => '?').join(',')})`);
+        args.push(...selected.map(value => value === '(blank)' ? '' : value));
+      }
+      continue;
+    }
     const v = String(raw).trim();
     if (key === 'is_dup' || key === 'has_child') {
       clauses.push(`${expr} = ?`);
@@ -3827,6 +3891,7 @@ function getRaw(opts = {}) {
     sum_hours: +(summary.s / 3600).toFixed(1),
     dup_rows: summary.d,
     columns: RAW_COLS.map(([key, label]) => ({ key, label })),
+    filter_options: rawFilterOptions.options,
     items,
   };
 }
@@ -5345,6 +5410,18 @@ if (typeof window !== 'undefined') {
   table.raw tr.frow th { top: 26px; z-index: 1; padding: 3px 5px; cursor: default; }
   table.raw tr.frow input { width: 100%; min-width: 70px; font-size: 0.68rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text); }
   table.raw tr.frow input:focus { border-color: var(--blue); outline: none; }
+  table.raw tr.frow .raw-multi-filter-trigger { width: 100%; min-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .67rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text2); cursor: pointer; text-align: left; }
+  table.raw tr.frow .raw-multi-filter-trigger.active { border-color: var(--blue); color: var(--blue); font-weight: 650; background: #f4f8ff; }
+  .raw-multi-filter-menu { position: fixed; z-index: 80; width: min(330px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); box-shadow: 0 12px 28px rgba(15, 34, 58, .2); }
+  .raw-multi-filter-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+  .raw-multi-filter-head strong { margin-right: auto; font-size: .73rem; }
+  .raw-multi-filter-head button { padding: 3px 6px; font-size: .66rem; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
+  .raw-multi-filter-search { box-sizing: border-box; width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: .72rem; color: var(--text); }
+  .raw-multi-filter-search:focus { border-color: var(--blue); outline: 2px solid rgba(59, 113, 202, .14); }
+  .raw-multi-filter-options { max-height: min(300px, calc(100vh - 150px)); overflow: auto; border-top: 1px solid var(--surface2); }
+  .raw-multi-filter-option { display: flex; align-items: center; gap: 8px; padding: 7px 3px; border-bottom: 1px solid var(--surface2); font-size: .72rem; cursor: pointer; }
+  .raw-multi-filter-option:hover { color: var(--blue); background: #f5f8fd; }
+  .raw-multi-filter-option input { accent-color: var(--blue); }
   table.raw td { white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
   table.raw tbody tr:hover { background: #e8f0fe; }
   table.raw a { color: var(--blue); text-decoration: none; }
@@ -6252,6 +6329,7 @@ const RAW_DEFAULT_VISIBLE_COLUMNS = [
 let rawState = {
   page: 1, per_page: 100, sort: 'hours', dir: 'desc', filters: {}, focus: null,
   visibleColumns: null, columnMenuOpen: false, columnSearch: '',
+  multiFilterKey: '', multiFilterSearch: '', multiFilterAnchor: null,
 };
 let rawCols = null;
 let rawLastData = null;
@@ -6315,6 +6393,62 @@ function rawUseKeyColumns() {
   renderRawColumns();
 }
 
+function rawOpenMultiFilter(key, anchor) {
+  if (rawState.multiFilterKey === key) {
+    rawState.multiFilterKey = '';
+    rawState.multiFilterSearch = '';
+    rawState.multiFilterAnchor = null;
+  } else {
+    const rect = anchor.getBoundingClientRect();
+    rawState.multiFilterKey = key;
+    rawState.multiFilterSearch = '';
+    rawState.multiFilterAnchor = {
+      left: Math.max(10, Math.min(rect.left, window.innerWidth - 340)),
+      top: Math.max(10, Math.min(rect.bottom + 5, window.innerHeight - 330)),
+    };
+  }
+  renderRawColumns();
+}
+
+function rawCloseMultiFilter() {
+  rawState.multiFilterKey = '';
+  rawState.multiFilterSearch = '';
+  rawState.multiFilterAnchor = null;
+  renderRawColumns();
+}
+
+function rawSetMultiFilterSearch(value) {
+  rawState.multiFilterSearch = value || '';
+  renderRawColumns();
+}
+
+function rawSetMultiFilterValue(key, value, checked) {
+  const selected = new Set(Array.isArray(rawState.filters[key]) ? rawState.filters[key] : []);
+  if (checked) selected.add(value);
+  else selected.delete(value);
+  if (selected.size) rawState.filters[key] = [...selected];
+  else delete rawState.filters[key];
+  rawState.focus = null;
+  rawState.multiFilterKey = key;
+  loadRaw(true);
+}
+
+function rawClearMultiFilter(key) {
+  delete rawState.filters[key];
+  rawState.focus = null;
+  rawState.multiFilterKey = key;
+  loadRaw(true);
+}
+
+function rawClearAllFilters() {
+  rawState.filters = {};
+  rawState.focus = null;
+  rawState.multiFilterKey = '';
+  rawState.multiFilterSearch = '';
+  rawState.multiFilterAnchor = null;
+  loadRaw(true);
+}
+
 function rawQuery() {
   const p = {page: rawState.page, perPage: rawState.per_page, sort: rawState.sort, dir: rawState.dir, filters: {...rawState.filters}};
   return p;
@@ -6366,6 +6500,33 @@ function renderRaw(d) {
             '</div></div>'
         : '') +
     '</div>';
+  const activeMultiColumn = d.columns.find(c => c.key === rawState.multiFilterKey);
+  const activeMultiOptions = activeMultiColumn ? (d.filter_options?.[activeMultiColumn.key] || []) : [];
+  const activeMultiSelected = new Set(activeMultiColumn && Array.isArray(rawState.filters[activeMultiColumn.key])
+    ? rawState.filters[activeMultiColumn.key] : []);
+  const multiNeedle = rawState.multiFilterSearch.trim().toLowerCase();
+  const matchingMultiOptions = activeMultiOptions.filter(value => !multiNeedle || value.toLowerCase().includes(multiNeedle));
+  const multiFilterMenu = activeMultiColumn && rawState.multiFilterAnchor
+    ? '<div class="raw-multi-filter-menu" style="left:' + rawState.multiFilterAnchor.left + 'px;top:' + rawState.multiFilterAnchor.top + 'px" onclick="event.stopPropagation()">' +
+        '<div class="raw-multi-filter-head"><strong>' + escHTML(activeMultiColumn.label) + '</strong><button type="button" onclick="rawClearMultiFilter(\'' + activeMultiColumn.key + '\')">All</button><button type="button" aria-label="Close ' + attr(activeMultiColumn.label) + ' filter" onclick="rawCloseMultiFilter()">×</button></div>' +
+        '<input class="raw-multi-filter-search" type="search" value="' + attr(rawState.multiFilterSearch) + '" placeholder="Search ' + attr(activeMultiColumn.label.toLowerCase()) + '" aria-label="Search ' + attr(activeMultiColumn.label) + '" oninput="rawSetMultiFilterSearch(this.value)">' +
+        '<div class="raw-multi-filter-options">' +
+          (matchingMultiOptions.length
+            ? matchingMultiOptions.map(value => '<label class="raw-multi-filter-option"><input type="checkbox" data-v="' + attr(value) + '"' +
+                (activeMultiSelected.has(value) ? ' checked' : '') + ' onchange="rawSetMultiFilterValue(\'' + activeMultiColumn.key + '\', this.dataset.v, this.checked)"><span>' + escHTML(value) + '</span></label>').join('')
+            : '<div class="raw-column-empty">No values match this search.</div>') +
+        '</div></div>'
+    : '';
+  const filterControl = c => {
+    if (RAW_MULTI_FILTER_KEYS.has(c.key)) {
+      const selected = Array.isArray(rawState.filters[c.key]) ? rawState.filters[c.key] : [];
+      const label = selected.length ? selected.length + ' selected' : 'All';
+      return '<th><button type="button" class="raw-multi-filter-trigger' + (selected.length ? ' active' : '') + '" data-k="' + c.key + '" onclick="rawOpenMultiFilter(this.dataset.k, this)">' + label + '</button></th>';
+    }
+    return '<th><input value="' + attr(rawState.filters[c.key] || '') +
+      '" placeholder="' + (c.key === 'hours' ? '≥ hrs' : 'filter') +
+      '" oninput="rawFilter(this.dataset.k, this.value)" data-k="' + c.key + '"></th>';
+  };
 
   el.innerHTML =
     '<div class="raw-bar">' +
@@ -6378,20 +6539,19 @@ function renderRaw(d) {
         [25, 50, 100, 250, 500, 1000].map(n => '<option value="' + n + '"' +
           (n === rawState.per_page ? ' selected' : '') + '>' + n + '</option>').join('') +
       '</select>' +
-      '<button onclick="rawState.filters={};rawState.focus=null;loadRaw(true)">Clear filters</button>' +
+      '<button onclick="rawClearAllFilters()">Clear filters</button>' +
       '<button onclick="rawState.page=Math.max(1,rawState.page-1);loadRaw()"' +
         (rawState.page <= 1 ? ' disabled' : '') + '>&#8592;</button>' +
       '<span>' + rawState.page + ' / ' + pages.toLocaleString() + '</span>' +
       '<button onclick="rawState.page++;loadRaw()"' +
         (rawState.page >= pages ? ' disabled' : '') + '>&#8594;</button>' +
     '</div>' +
+    multiFilterMenu +
     '<div class="tbl-wrap raw-wrap"><table class="gtable raw"><thead><tr>' +
       visibleColumns.map(c => '<th onclick="rawSort(this.dataset.k)" data-k="' + c.key + '">' +
         escHTML(c.label) + arrow(c.key) + '</th>').join('') +
     '</tr><tr class="frow">' +
-      visibleColumns.map(c => '<th><input value="' + attr(rawState.filters[c.key] || '') +
-        '" placeholder="' + (c.key === 'hours' ? '≥ hrs' : 'filter') +
-        '" oninput="rawFilter(this.dataset.k, this.value)" data-k="' + c.key + '"></th>').join('') +
+      visibleColumns.map(filterControl).join('') +
     '</tr></thead><tbody>' +
       (d.items.length ? d.items.map(r => '<tr>' + visibleColumns.map(c => {
         let v = r[c.key];
