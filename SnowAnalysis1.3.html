@@ -653,11 +653,17 @@ function getCostCapacityMetrics(opts = {}) {
             COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs
      FROM parent WHERE LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'${groupSql}
      GROUP BY COALESCE(NULLIF(TRIM(category),''),'Uncategorised'), COALESCE(agroup,''), COALESCE(country,'')`, groupArgs);
+  const closedIncompleteBySource = queryAll(db,
+    `SELECT COALESCE(NULLIF(TRIM(source),''),'Unspecified') AS source,
+            COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs
+       FROM parent WHERE LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'${groupSql}
+      GROUP BY COALESCE(NULLIF(TRIM(source),''),'Unspecified')
+      ORDER BY secs DESC, source COLLATE NOCASE`, groupArgs);
   const duplicate = currentStats && currentStats.summary ? currentStats.summary : {};
   const result = {
     available: true,
     scope: groups.length ? groups.length + ' selected team' + (groups.length === 1 ? '' : 's') : 'all uploaded teams',
-    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, reasonCategoryTiming, milestoneModeWaste, closedIncompleteCategoryRegionInputs, quickBooking,
+    email, siReason, invoicing, closedIncomplete, reasonTagged, reasonBlank, reasonCategoryTiming, milestoneModeWaste, closedIncompleteCategoryRegionInputs, closedIncompleteBySource, quickBooking,
     tickets: Number(duplicate.total_parents || 0),
   };
   costCapacityCache.set(cacheKey, result);
@@ -5922,6 +5928,16 @@ function renderCapacity() {
   const averageMinutes = r => Number(r.tickets || 0) ? Number(r.secs || 0) / Number(r.tickets) / 60 : 0;
   const breakdownRow = (dimension, r) => '<tr><td>' + drillButton(dimension, r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(r)) + ' min</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
   const breakdownTotal = (rows, label) => { const totals = rows.reduce((sum, r) => ({ tickets: sum.tickets + r.tickets, secs: sum.secs + r.secs }), { tickets: 0, secs: 0 }); return '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + label + '</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(totals)) + ' min</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot>'; };
+  const closedIncompleteSourceRows = (data.closedIncompleteBySource || []).map(row => ({
+    source: row.source || 'Unspecified', tickets: Number(row.tickets || 0), secs: Number(row.secs || 0),
+  }));
+  const closedIncompleteSourceSecs = closedIncompleteSourceRows.reduce((sum, row) => sum + row.secs, 0);
+  const closedIncompleteSourceTickets = closedIncompleteSourceRows.reduce((sum, row) => sum + row.tickets, 0);
+  const closedIncompleteSourceBody = closedIncompleteSourceRows.map(row => {
+    const hours = capHours(row.secs);
+    return '<tr><td><b>' + escHTML(row.source) + '</b></td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(row)) + ' min</td><td class="num">' + capNum(hours) + ' h</td><td class="num"><b>' + capNum(fte(hours), 2) + ' FTE</b></td><td class="num">' + (closedIncompleteSourceSecs ? capNum(100 * row.secs / closedIncompleteSourceSecs) + '%' : '—') + '</td></tr>';
+  }).join('') || '<tr><td colspan="6">No Closed Incomplete tickets in scope.</td></tr>';
+  const closedIncompleteSourceTotal = '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>Total</td><td class="num">' + closedIncompleteSourceTickets.toLocaleString() + '</td><td class="num">' + capNum(closedIncompleteSourceTickets ? closedIncompleteSourceSecs / closedIncompleteSourceTickets / 60 : 0) + ' min</td><td class="num">' + capNum(capHours(closedIncompleteSourceSecs)) + ' h</td><td class="num">' + capNum(fte(capHours(closedIncompleteSourceSecs)), 2) + ' FTE</td><td class="num">100.0%</td></tr></tfoot>';
   const assignmentRowsForCategory = category => {
     const map = new Map();
     data.closedIncompleteCategoryRegionInputs.forEach(input => {
@@ -6013,6 +6029,7 @@ function renderCapacity() {
     '</tbody></table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Use the caret to expand a category into assignment groups. Click the category name to show its region split, and click any column heading to sort. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' + categorySortHeader('Category', 'name') + categorySortHeader('Tickets', 'tickets', true) + categorySortHeader('Average / ticket', 'avgMinutes', true) + categorySortHeader('Logged effort', 'secs', true) + categorySortHeader('FTE', 'fte', true) + '</tr></thead><tbody>' + (categoryBreakdownRows || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
     '<div class="chart-card"><h3>Closed Incomplete — by region ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Click a region to show its category split. Region is derived from assignment group and country. ' + (closedIncompleteDrill.dimension === 'category' ? 'Showing regions for category “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'category\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (regionRows.map(r => breakdownRow('region', r)).join('') || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(regionRows, closedIncompleteDrill.dimension === 'category' ? 'Total (selected category)' : 'Total (all regions)') + '</table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Closed Incomplete — FTE by open from ' + deckTag('32') + '</h3><div class="note">This uses the original <b>open_from</b> field from the uploaded CSV. Each source&apos;s FTE = its Closed Incomplete logged effort ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. The total reconciles to Closed Incomplete handling above.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Open from</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th><th class="num">FTE share</th></tr></thead><tbody>' + closedIncompleteSourceBody + '</tbody>' + closedIncompleteSourceTotal + '</table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full capacity-qb"><h3>Quick Booking — live country comparison ' + deckTag('15') + '</h3><div class="note">Derived from category = Quick Booking in the uploaded CSV. “Over threshold” uses the editable threshold above and time_worked.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country</th><th class="num">Tickets</th><th class="num">Average time</th><th class="num">Over threshold</th><th class="num">Logged effort</th></tr></thead><tbody>' + qbRows + '</tbody></table></div></div></div>';
   capacityLoaded = true;
 }
