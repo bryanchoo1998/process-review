@@ -5453,6 +5453,11 @@ if (typeof window !== 'undefined') {
   table.gtable tr.quad-hl { background: #dcebff; }
   table.gtable tr.quad-sel { background: #cfe3ff; box-shadow: inset 3px 0 0 #3b71ca; }
   table.gtable .dup-pct { color: var(--text3); font-size: 0.68rem; }
+  .reason-region-mix { width: min(250px, 100%); margin-top: 5px; }
+  .reason-region-mix-bar { display: flex; height: 6px; overflow: hidden; border-radius: 99px; background: #e5e7eb; }
+  .reason-region-mix-segment { min-width: 1px; }
+  .reason-region-mix-labels { display: flex; flex-wrap: wrap; gap: 2px 7px; margin-top: 3px; color: var(--text3); font-size: .61rem; line-height: 1.2; }
+  .reason-region-mix-labels span { white-space: nowrap; }
   .quad-wrap { position: relative; }
   .quad-sum-card { position: absolute; top: 8px; right: 8px; z-index: 20; min-width: 200px;
     background: #fff; border: 1px solid var(--border); border-radius: 8px;
@@ -9180,6 +9185,18 @@ function renderReasonAnalysis() {
     : 'Timing-gap total (all matched categories)';
   const totalRow = visibleTimeRows.length ? '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + totalLabel + '</td><td class="num">' + matchedReasonTickets.toLocaleString() + '</td><td class="num">' + (matchedCategoryTickets ? (100 * matchedReasonTickets / matchedCategoryTickets).toFixed(2) + '%' : '—') + '</td><td class="num">' + matchedWithOutliers.toLocaleString() + ' / ' + matchedWithoutOutliers.toLocaleString() + '</td><td class="num">' + reasonMinutes(weightedWithAverage) + '</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">' + matchedWithoutTickets.toLocaleString() + '</td><td class="num">' + reasonMinutes(weightedWithoutAverage) + '</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num" style="color:' + (weightedGap < 0 ? 'var(--red)' : 'var(--green)') + '">' + (weightedGap >= 0 ? '+' : '') + reasonMinutes(weightedGap) + '</td><td class="num">—</td><td class="num calc">Σ [tickets × gap] ÷ 60</td><td class="num">' + capNum(displayedImpactHours) + ' h</td><td class="num"><b>' + capNum(displayedImpactFte, 2) + ' FTE</b></td></tr></tfoot>' : '';
   const sortArrow = key => reasonAnalysisState.sortKey === key ? (reasonAnalysisState.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const regionMixColors = ['#3b71ca', '#0d9488', '#7c3aed', '#d97706', '#db2777', '#0891b2', '#65a30d', '#64748b'];
+  const regionMix = regionRows => {
+    const total = regionRows.reduce((sum, row) => sum + row.values.length, 0);
+    if (!total) return '';
+    const topRows = regionRows.slice(0, 3);
+    const otherCount = regionRows.slice(3).reduce((sum, row) => sum + row.values.length, 0);
+    const labels = topRows.map(row => '<span>' + escHTML(row.region) + ' ' + (100 * row.values.length / total).toFixed(1) + '%</span>');
+    if (otherCount) labels.push('<span>Other ' + (100 * otherCount / total).toFixed(1) + '%</span>');
+    return '<div class="reason-region-mix" aria-label="Regional mix: ' + attr(regionRows.map(row => row.region + ' ' + (100 * row.values.length / total).toFixed(1) + '%').join(', ')) + '"><div class="reason-region-mix-bar">' +
+      regionRows.map((row, index) => '<span class="reason-region-mix-segment" style="flex:' + row.values.length + ';background:' + regionMixColors[index % regionMixColors.length] + '" title="' + attr(row.region + ': ' + row.values.length.toLocaleString() + ' tickets (' + (100 * row.values.length / total).toFixed(1) + '%)') + '"></span>').join('') +
+      '</div><div class="reason-region-mix-labels">' + labels.join('') + '</div></div>';
+  };
   const expandedDetail = category => {
     const rows = reasonRows.filter(row => row.category === category);
     if (!rows.length) return '<div class="note">No tickets with a reason in this category.</div>';
@@ -9194,6 +9211,7 @@ function renderReasonAnalysis() {
         const regionRows = [...regionGroups.entries()]
           .map(([region, values]) => ({ region, values }))
           .sort((a, b) => b.values.length - a.values.length || a.region.localeCompare(b.region));
+        const mix = regionMix(regionRows);
         const regionDetail = isExpanded
           ? '<tr><td colspan="9"><div style="padding:8px 12px 12px 24px;background:rgba(13,148,136,.06)"><b>Region breakdown for ' + escHTML(row.reason) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">% of reason</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Average time worked</th><th class="num">Median time worked</th><th class="num">P90 time worked</th><th class="num">P95 time worked</th></tr></thead><tbody>' +
               (regionRows.length ? regionRows.map(regionRow => {
@@ -9202,7 +9220,7 @@ function renderReasonAnalysis() {
               }).join('') : '<tr><td colspan="9">No regional records are available for this reason.</td></tr>') +
             '</tbody><tfoot><tr style="font-weight:700"><td>Total</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">100.00%</td><td class="num">' + (100 * timing.length / (byCategory.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + (100 * timing.length / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr></tfoot></table></div></td></tr>'
           : '';
-        return '<tr><td><button type="button" data-category="' + attr(category) + '" data-reason="' + attr(row.reason) + '" onclick="reasonAnalysisToggleReason(this.dataset.category, this.dataset.reason)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (isExpanded ? '▾ ' : '▸ ') + escHTML(row.reason) + '</button></td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr>' + regionDetail;
+        return '<tr><td><button type="button" data-category="' + attr(category) + '" data-reason="' + attr(row.reason) + '" onclick="reasonAnalysisToggleReason(this.dataset.category, this.dataset.reason)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (isExpanded ? '▾ ' : '▸ ') + escHTML(row.reason) + '</button>' + mix + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr>' + regionDetail;
       }).join('') +
       '</tbody></table></div>';
   };
