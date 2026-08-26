@@ -2269,9 +2269,18 @@ function analysisCellType(s, t, resp){
 
 /* Row diagnosis — the core analytical move. Whether a deviation is
    the SOP's fault or a region's is a property of the ROW, not the
-   cell. Mirrors v_step_diagnosis exactly. */
+   cell. Compare the refined cell type rather than the broad database
+   verdict: "step not done" and "followed local doc" are both risk
+   verdicts, but they are not the same regional practice. */
 function analysisDiagnose(step){
-  const cells = ANALYSIS.regions.map(r => (step.cells[r]||{t:'none'}).t).filter(t => t !== 'none');
+  const cells = ANALYSIS.regions.map(r => {
+    const cell = step.cells[r]||{t:'none'};
+    const type = cell.t in DEV ? cell.t : 'none';
+    const response = (cell.sessionId && ANALYSIS.responses)
+      ? ANALYSIS.responses.get(cell.sessionId + '|' + step.no)
+      : null;
+    return analysisCellType(step, type, response);
+  }).filter(t => t !== 'none');
   if(!cells.length) return 'no_data';
   const devs = cells.filter(t => t !== 'aligned' && t !== 'stale');
   if(!devs.length) return 'conformant';
