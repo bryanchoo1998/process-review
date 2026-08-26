@@ -5743,7 +5743,7 @@ function onDataReady() {
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
   quickBookingNoShipmentAnalysisCache.clear();
-  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
+  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   modeState.mode = 'all';
   // Open the primary management view only after every cache has been reset.
@@ -5772,7 +5772,7 @@ function resetAll() {
   shipmentAnalysisHotspots = null;
   descriptionMatchedAnalysisCache.clear();
   quickBookingNoShipmentAnalysisCache.clear();
-  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
+  reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map() };
   shipmentRegionFlowCache = null;
   closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
   closedIncompleteCategoryExpanded.clear();
@@ -8962,9 +8962,15 @@ function renderShipmentRegionSection() {
 // This view stays lazy because median calculation needs the individual logged
 // time values. It is scoped to the active Team filter, just like the other
 // dashboard pages.
-const reasonAnalysisState = { timeSearch: '', outlierMode: 'include', sortKey: 'category', sortDir: 'asc', expandedCategories: new Set() };
+const reasonAnalysisState = {
+  timeSearch: '', outlierMode: 'include', sortKey: 'category', sortDir: 'asc',
+  expandedCategories: new Set(), expandedReasons: new Set(),
+};
 let reasonAnalysisCharts = [];
-let reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map() };
+let reasonAnalysisCache = {
+  key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [],
+  reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map(),
+};
 
 function reasonAnalysisFilterClause(alias = 'p') {
   const groups = (currentGroups || []).filter(Boolean);
@@ -9024,6 +9030,13 @@ function reasonAnalysisToggle(category) {
   renderReasonAnalysis();
 }
 
+function reasonAnalysisToggleReason(category, reason) {
+  const key = category + '\x1f' + reason;
+  const expanded = reasonAnalysisState.expandedReasons;
+  expanded.has(key) ? expanded.delete(key) : expanded.add(key);
+  renderReasonAnalysis();
+}
+
 function renderReasonAnalysis() {
   const root = document.getElementById('reasonAnalysisSection');
   if (!root) return;
@@ -9060,17 +9073,29 @@ function renderReasonAnalysis() {
       item.withoutOutliers = reasonCohortOutlierStats(item.withoutReason);
     }
     const cachedReasonTimeRows = queryWithRetry(db,
-      `SELECT ${categoryExpr} category, TRIM(p.reason) reason, p.time_worked secs
+      `SELECT ${categoryExpr} category, TRIM(p.reason) reason, p.time_worked secs,
+              COALESCE(p.agroup, '') agroup, COALESCE(p.country, '') country
          FROM parent p
         WHERE TRIM(COALESCE(p.reason, '')) != ''${filter.sql}`, filter.args);
     const cachedReasonTimeGroups = new Map();
+    const cachedReasonRegionTimeGroups = new Map();
     for (const row of cachedReasonTimeRows) {
       const key = row.category + '\x1f' + row.reason;
       const item = cachedReasonTimeGroups.get(key) || [];
       item.push(row.secs / 60);
       cachedReasonTimeGroups.set(key, item);
+      const region = regionOf(row.agroup || '', row.country || '') || '(blank)';
+      const regionGroups = cachedReasonRegionTimeGroups.get(key) || new Map();
+      const regionTiming = regionGroups.get(region) || [];
+      regionTiming.push(row.secs / 60);
+      regionGroups.set(region, regionTiming);
+      cachedReasonRegionTimeGroups.set(key, regionGroups);
     }
-    reasonAnalysisCache = { key: cacheKey, reasonRows: cachedReasonRows, categoryTotals: cachedCategoryTotals, timeGroups: [...cachedTimeByCategory.values()], reasonTimeGroups: cachedReasonTimeGroups };
+    reasonAnalysisCache = {
+      key: cacheKey, reasonRows: cachedReasonRows, categoryTotals: cachedCategoryTotals,
+      timeGroups: [...cachedTimeByCategory.values()], reasonTimeGroups: cachedReasonTimeGroups,
+      reasonRegionTimeGroups: cachedReasonRegionTimeGroups,
+    };
   }
   const reasonRows = reasonAnalysisCache.reasonRows;
 
@@ -9158,8 +9183,27 @@ function renderReasonAnalysis() {
   const expandedDetail = category => {
     const rows = reasonRows.filter(row => row.category === category);
     if (!rows.length) return '<div class="note">No tickets with a reason in this category.</div>';
-    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Tickets with logged time</th><th class="num">Average time worked</th><th class="num">Median time worked</th><th class="num">P90 time worked</th><th class="num">P95 time worked</th></tr></thead><tbody>' +
-      rows.map(row => { const timing = reasonAnalysisCache.reasonTimeGroups.get(category + '\x1f' + row.reason) || []; const categoryTime = timeGroupByCategory.get(category); const treatedTiming = categoryTime ? treatOutliers(timing, categoryTime, 'with-reason') : timing; return '<tr><td>' + escHTML(row.reason) + '</td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr>'; }).join('') +
+    return '<div style="padding:8px 12px 12px;background:rgba(59,113,202,.06)"><b>Reason breakdown for ' + escHTML(category) + '</b><div class="note" style="margin-top:4px">Click a reason to expand its regional source.</div><table class="gtable" style="margin-top:8px"><thead><tr><th>Reason</th><th class="num">Tickets</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Tickets with logged time</th><th class="num">Average time worked</th><th class="num">Median time worked</th><th class="num">P90 time worked</th><th class="num">P95 time worked</th></tr></thead><tbody>' +
+      rows.map(row => {
+        const reasonKey = category + '\x1f' + row.reason;
+        const timing = reasonAnalysisCache.reasonTimeGroups.get(reasonKey) || [];
+        const categoryTime = timeGroupByCategory.get(category);
+        const treatedTiming = categoryTime ? treatOutliers(timing, categoryTime, 'with-reason') : timing;
+        const isExpanded = reasonAnalysisState.expandedReasons.has(reasonKey);
+        const regionGroups = reasonAnalysisCache.reasonRegionTimeGroups.get(reasonKey) || new Map();
+        const regionRows = [...regionGroups.entries()]
+          .map(([region, values]) => ({ region, values }))
+          .sort((a, b) => b.values.length - a.values.length || a.region.localeCompare(b.region));
+        const regionDetail = isExpanded
+          ? '<tr><td colspan="9"><div style="padding:8px 12px 12px 24px;background:rgba(13,148,136,.06)"><b>Region breakdown for ' + escHTML(row.reason) + '</b><table class="gtable" style="margin-top:8px"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">% of reason</th><th class="num">% of category&apos;s reason tickets</th><th class="num">% of total tickets in category</th><th class="num">Average time worked</th><th class="num">Median time worked</th><th class="num">P90 time worked</th><th class="num">P95 time worked</th></tr></thead><tbody>' +
+              (regionRows.length ? regionRows.map(regionRow => {
+                const treatedRegionTiming = categoryTime ? treatOutliers(regionRow.values, categoryTime, 'with-reason') : regionRow.values;
+                return '<tr><td><b>' + escHTML(regionRow.region) + '</b></td><td class="num">' + regionRow.values.length.toLocaleString() + '</td><td class="num">' + (100 * regionRow.values.length / (timing.length || 1)).toFixed(2) + '%</td><td class="num">' + (100 * regionRow.values.length / (byCategory.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + (100 * regionRow.values.length / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + reasonMinutes(average(treatedRegionTiming)) + '</td><td class="num">' + reasonMinutes(reasonMedian(treatedRegionTiming)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(treatedRegionTiming, 0.90)) + '</td><td class="num">' + reasonMinutes(reasonPercentile(treatedRegionTiming, 0.95)) + '</td></tr>';
+              }).join('') : '<tr><td colspan="9">No regional records are available for this reason.</td></tr>') +
+            '</tbody><tfoot><tr style="font-weight:700"><td>Total</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">100.00%</td><td class="num">' + (100 * timing.length / (byCategory.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + (100 * timing.length / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr></tfoot></table></div></td></tr>'
+          : '';
+        return '<tr><td><button type="button" data-category="' + attr(category) + '" data-reason="' + attr(row.reason) + '" onclick="reasonAnalysisToggleReason(this.dataset.category, this.dataset.reason)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (isExpanded ? '▾ ' : '▸ ') + escHTML(row.reason) + '</button></td><td class="num">' + row.c.toLocaleString() + '</td><td class="num">' + (100 * row.c / byCategory.get(category)).toFixed(2) + '%</td><td class="num">' + (100 * row.c / (categoryTotals.get(category) || 1)).toFixed(2) + '%</td><td class="num">' + timing.length.toLocaleString() + '</td><td class="num">' + (timing.length ? reasonMinutes(average(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonMedian(treatedTiming)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.90)) : '—') + '</td><td class="num">' + (timing.length ? reasonMinutes(reasonPercentile(treatedTiming, 0.95)) : '—') + '</td></tr>' + regionDetail;
+      }).join('') +
       '</tbody></table></div>';
   };
   const topCategories = categoryRows.slice(0, 15);
@@ -9178,7 +9222,7 @@ function renderReasonAnalysis() {
       '</div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Top categories with a reason</h3><div class="chart-wrap tall"><canvas id="reasonCategoryChart"></canvas></div></div>' +
       '<div class="chart-card"><h3>Largest time difference by category</h3><div class="note">Average and median minutes are shown together.</div><div class="chart-wrap tall"><canvas id="reasonTimeChart"></canvas></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>Time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><label>Extreme values <select onchange="reasonAnalysisOutlierMode(this.value)"><option value="include"' + (reasonAnalysisState.outlierMode === 'include' ? ' selected' : '') + '>Include extremes</option><option value="cap-p99"' + (reasonAnalysisState.outlierMode === 'cap-p99' ? ' selected' : '') + '>Cap cohorts at category p99</option></select></label><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · click a category to view reasons</span></div><div class="note"><b>Executive audit trail:</b> an included category&apos;s hours = with-reason tickets × (with-reason average − its own without-reason average) ÷ 60. The FTE column divides those hours by ' + capNum(reasonMonthlyHours) + ' hours per FTE/month. The total reconciles to <b>Reason timing gap</b> only with <b>Include extremes</b> and no category search. IQR extremes are values above Q3 + 3×IQR, calculated separately within each category and cohort. ' + (reasonAnalysisState.outlierMode === 'cap-p99' ? 'This is a capped sensitivity view, not the Slide 32 headline.' : 'All logged values, including zeros, are included.') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'outlierCount\')" style="cursor:pointer">IQR extremes W / W/O' + sortArrow('outlierCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withAverage\')" style="cursor:pointer">With: average' + sortArrow('withAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withMedian\')" style="cursor:pointer">With: median' + sortArrow('withMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP90\')" style="cursor:pointer">With: p90' + sortArrow('withP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP95\')" style="cursor:pointer">With: p95' + sortArrow('withP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutAverage\')" style="cursor:pointer">Without: average' + sortArrow('withoutAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutMedian\')" style="cursor:pointer">Without: median' + sortArrow('withoutMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP90\')" style="cursor:pointer">Without: p90' + sortArrow('withoutP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP95\')" style="cursor:pointer">Without: p95' + sortArrow('withoutP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'averageDifference\')" style="cursor:pointer">Average difference' + sortArrow('averageDifference') + '</th><th class="num" onclick="reasonAnalysisSort(\'medianDifference\')" style="cursor:pointer">Median difference' + sortArrow('medianDifference') + '</th><th class="num">Calculation</th><th class="num" onclick="reasonAnalysisSort(\'impactHours\')" style="cursor:pointer">Timing-gap hours' + sortArrow('impactHours') + '</th><th class="num" onclick="reasonAnalysisSort(\'impactFte\')" style="cursor:pointer">FTE contribution' + sortArrow('impactFte') + '</th></tr></thead><tbody>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Time worked — with vs without reason</h3><div class="table-ctl"><input type="search" value="' + attr(reasonAnalysisState.timeSearch) + '" placeholder="Search category…" oninput="reasonAnalysisSearch(\'timeSearch\', this.value)"><label>Extreme values <select onchange="reasonAnalysisOutlierMode(this.value)"><option value="include"' + (reasonAnalysisState.outlierMode === 'include' ? ' selected' : '') + '>Include extremes</option><option value="cap-p99"' + (reasonAnalysisState.outlierMode === 'cap-p99' ? ' selected' : '') + '>Cap cohorts at category p99</option></select></label><span>' + visibleTimeRows.length.toLocaleString() + ' categories · minutes · expand category → reason → region</span></div><div class="note"><b>Executive audit trail:</b> an included category&apos;s hours = with-reason tickets × (with-reason average − its own without-reason average) ÷ 60. Expand a category to see its reasons, then expand a reason to see the contributing regions. Regional ticket totals reconcile to the selected reason. The FTE column divides those hours by ' + capNum(reasonMonthlyHours) + ' hours per FTE/month. The total reconciles to <b>Reason timing gap</b> only with <b>Include extremes</b> and no category search. IQR extremes are values above Q3 + 3×IQR, calculated separately within each category and cohort. ' + (reasonAnalysisState.outlierMode === 'cap-p99' ? 'This is a capped sensitivity view, not the Slide 32 headline.' : 'All logged values, including zeros, are included.') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th onclick="reasonAnalysisSort(\'category\')" style="cursor:pointer">Category' + sortArrow('category') + '</th><th class="num" onclick="reasonAnalysisSort(\'withCount\')" style="cursor:pointer">With reason tickets' + sortArrow('withCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'reasonPercent\')" style="cursor:pointer">Reason tickets % of category' + sortArrow('reasonPercent') + '</th><th class="num" onclick="reasonAnalysisSort(\'outlierCount\')" style="cursor:pointer">IQR extremes W / W/O' + sortArrow('outlierCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withAverage\')" style="cursor:pointer">With: average' + sortArrow('withAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withMedian\')" style="cursor:pointer">With: median' + sortArrow('withMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP90\')" style="cursor:pointer">With: p90' + sortArrow('withP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withP95\')" style="cursor:pointer">With: p95' + sortArrow('withP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutCount\')" style="cursor:pointer">Without reason tickets' + sortArrow('withoutCount') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutAverage\')" style="cursor:pointer">Without: average' + sortArrow('withoutAverage') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutMedian\')" style="cursor:pointer">Without: median' + sortArrow('withoutMedian') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP90\')" style="cursor:pointer">Without: p90' + sortArrow('withoutP90') + '</th><th class="num" onclick="reasonAnalysisSort(\'withoutP95\')" style="cursor:pointer">Without: p95' + sortArrow('withoutP95') + '</th><th class="num" onclick="reasonAnalysisSort(\'averageDifference\')" style="cursor:pointer">Average difference' + sortArrow('averageDifference') + '</th><th class="num" onclick="reasonAnalysisSort(\'medianDifference\')" style="cursor:pointer">Median difference' + sortArrow('medianDifference') + '</th><th class="num">Calculation</th><th class="num" onclick="reasonAnalysisSort(\'impactHours\')" style="cursor:pointer">Timing-gap hours' + sortArrow('impactHours') + '</th><th class="num" onclick="reasonAnalysisSort(\'impactFte\')" style="cursor:pointer">FTE contribution' + sortArrow('impactFte') + '</th></tr></thead><tbody>' +
       (visibleTimeRows.length ? visibleTimeRows.map(row => '<tr><td><button type="button" data-category="' + attr(row.category) + '" onclick="reasonAnalysisToggle(this.dataset.category)" style="border:0;background:transparent;padding:0;color:var(--blue);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer">' + (reasonAnalysisState.expandedCategories.has(row.category) ? '▾ ' : '▸ ') + escHTML(row.category) + '</button></td><td class="num">' + row.withCount.toLocaleString() + '</td><td class="num">' + (100 * row.reasonPercent).toFixed(2) + '%</td><td class="num" style="color:' + (row.outlierCount ? 'var(--red)' : 'var(--text3)') + '">' + row.withOutlierCount.toLocaleString() + ' / ' + row.withoutOutlierCount.toLocaleString() + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withAverage) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withMedian) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP90) : '—') + '</td><td class="num">' + (row.withCount ? reasonMinutes(row.withP95) : '—') + '</td><td class="num">' + row.withoutCount.toLocaleString() + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutAverage) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutMedian) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP90) : '—') + '</td><td class="num">' + (row.withoutCount ? reasonMinutes(row.withoutP95) : '—') + '</td><td class="num" style="color:' + (row.averageDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.isMatched ? (row.averageDifference >= 0 ? '+' : '') + reasonMinutes(row.averageDifference) : '—') + '</td><td class="num" style="color:' + (row.medianDifference < 0 ? 'var(--red)' : 'var(--green)') + '">' + (row.isMatched ? (row.medianDifference >= 0 ? '+' : '') + reasonMinutes(row.medianDifference) : '—') + '</td><td class="calc">' + (row.isMatched ? row.withCount.toLocaleString() + ' × (' + capNum(row.withAverage, 2) + ' − ' + capNum(row.withoutAverage, 2) + ') ÷ 60' : 'Excluded — no matching cohort') + '</td><td class="num">' + (row.isMatched ? capNum(row.impactHours) + ' h' : '—') + '</td><td class="num"><b>' + (row.isMatched ? capNum(row.impactFte, 2) + ' FTE' : '—') + '</b></td></tr>' + (reasonAnalysisState.expandedCategories.has(row.category) ? '<tr><td colspan="18">' + expandedDetail(row.category) + '</td></tr>' : '')).join('') : '<tr><td colspan="18">No categories match this search.</td></tr>') +
       '</tbody>' + totalRow + '</table></div></div></div>';
 
