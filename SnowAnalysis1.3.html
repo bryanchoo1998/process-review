@@ -5453,10 +5453,11 @@ if (typeof window !== 'undefined') {
   table.raw tbody tr:hover { background: #e8f0fe; }
   table.raw a { color: var(--blue); text-decoration: none; }
   table.gtable { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
-  table.gtable th { text-align: left; color: var(--text3); font-weight: 600; text-transform: uppercase; font-size: 0.65rem; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  table.gtable td { padding: 6px 8px; border-bottom: 1px solid var(--surface2); }
+  table.gtable th { text-align: left; color: var(--text3); font-weight: 600; text-transform: uppercase; font-size: 0.65rem; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.gtable th.num, table.gtable td.num { text-align: right; }
+  table.gtable td { padding: 6px 8px; border-bottom: 1px solid var(--surface2); vertical-align: middle; }
   table.gtable tbody tr:hover { background: #e8f0fe; cursor: pointer; }
-  table.gtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.gtable td.num { font-variant-numeric: tabular-nums; }
   table.gtable tr.quad-hl { background: #dcebff; }
   table.gtable tr.quad-sel { background: #cfe3ff; box-shadow: inset 3px 0 0 #3b71ca; }
   table.gtable .dup-pct { color: var(--text3); font-size: 0.68rem; }
