@@ -5326,6 +5326,19 @@ if (typeof window !== 'undefined') {
   .raw-bar .spacer { flex: 1; }
   .raw-bar select, .raw-bar button { font-size: 0.72rem; padding: 4px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; color: var(--text); cursor: pointer; }
   .raw-bar button:disabled { opacity: 0.4; cursor: default; }
+  .raw-column-picker { position: relative; }
+  .raw-column-trigger { white-space: nowrap; font-weight: 650; }
+  .raw-column-menu { position: absolute; right: 0; top: calc(100% + 7px); z-index: 40; width: min(320px, calc(100vw - 44px)); padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(15, 34, 58, .16); }
+  .raw-column-menu-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .raw-column-menu-head strong { margin-right: auto; font-size: .74rem; }
+  .raw-column-menu-head button { padding: 3px 6px; font-size: .66rem; }
+  .raw-column-search { box-sizing: border-box; width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: .72rem; color: var(--text); }
+  .raw-column-search:focus { border-color: var(--blue); outline: 2px solid rgba(59, 113, 202, .14); }
+  .raw-column-options { max-height: 282px; overflow: auto; border-top: 1px solid var(--surface2); }
+  .raw-column-option { display: flex; align-items: center; gap: 8px; padding: 7px 3px; border-bottom: 1px solid var(--surface2); font-size: .72rem; cursor: pointer; }
+  .raw-column-option:hover { color: var(--blue); background: #f5f8fd; }
+  .raw-column-option input { accent-color: var(--blue); }
+  .raw-column-empty { padding: 12px 3px; font-size: .72rem; color: var(--text3); }
   .raw-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; max-height: calc(100vh - 180px); overflow: auto; }
   table.raw { font-size: 0.7rem; }
   table.raw th { position: sticky; top: 0; background: var(--surface2); z-index: 2; cursor: pointer; user-select: none; white-space: nowrap; }
@@ -5614,6 +5627,7 @@ function onDataReady() {
   dashboardRenderedRevision = -1;
   capacityLoaded = false;
   rawLoaded = false;
+  rawLastData = null;
   document.getElementById('dashContent').innerHTML = '';
   document.getElementById('capacityContent').innerHTML = '';
   document.getElementById('rawContent').innerHTML = '';
@@ -5669,6 +5683,7 @@ function resetAll() {
   dashboardRenderedRevision = -1;
   capacityLoaded = false;
   rawLoaded = false;
+  rawLastData = null;
   tabRenderPending.clear();
   assigneeCacheKey = null; assigneeCache = null;
   rawCols = null;
@@ -6228,8 +6243,77 @@ function doSearch(query) {
 }
 
 // ── Raw data tab ──
-let rawState = {page: 1, per_page: 100, sort: 'hours', dir: 'desc', filters: {}, focus: null};
+const RAW_VISIBLE_COLUMNS_KEY = 'snow_analysis_raw_visible_columns_v1';
+const RAW_DEFAULT_VISIBLE_COLUMNS = [
+  'number', 'region', 'shipment_ids', 'open_from', 'country', 'agroup',
+  'assigned_to', 'short_desc', 'category', 'sub_category', 'state',
+  'opened_at', 'hours', 'kind',
+];
+let rawState = {
+  page: 1, per_page: 100, sort: 'hours', dir: 'desc', filters: {}, focus: null,
+  visibleColumns: null, columnMenuOpen: false, columnSearch: '',
+};
 let rawCols = null;
+let rawLastData = null;
+
+function rawStoreVisibleColumns(keys) {
+  const unique = [...new Set(keys)];
+  rawState.visibleColumns = unique;
+  try { localStorage.setItem(RAW_VISIBLE_COLUMNS_KEY, JSON.stringify(unique)); } catch (_) { /* Storage is optional. */ }
+}
+
+function rawVisibleColumns(columns) {
+  const keys = columns.map(c => c.key);
+  const valid = new Set(keys);
+  if (!rawState.visibleColumns) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(RAW_VISIBLE_COLUMNS_KEY) || 'null'); } catch (_) { /* Use defaults below. */ }
+    const initial = Array.isArray(saved) ? saved.filter(k => valid.has(k)) :
+      RAW_DEFAULT_VISIBLE_COLUMNS.filter(k => valid.has(k));
+    rawState.visibleColumns = initial.length ? [...new Set(initial)] : [keys[0]];
+  } else {
+    const available = rawState.visibleColumns.filter(k => valid.has(k));
+    rawState.visibleColumns = available.length ? [...new Set(available)] : [keys[0]];
+  }
+  const selected = new Set(rawState.visibleColumns);
+  return columns.filter(c => selected.has(c.key));
+}
+
+function renderRawColumns() {
+  if (rawLastData) renderRaw(rawLastData);
+}
+
+function rawToggleColumnMenu() {
+  rawState.columnMenuOpen = !rawState.columnMenuOpen;
+  renderRawColumns();
+}
+
+function rawSetColumnSearch(value) {
+  rawState.columnSearch = value;
+  rawState.columnMenuOpen = true;
+  renderRawColumns();
+}
+
+function rawSetVisibleColumn(key, checked) {
+  const current = new Set(rawState.visibleColumns || []);
+  if (checked) current.add(key);
+  else if (current.size > 1) current.delete(key);
+  rawState.columnMenuOpen = true;
+  rawStoreVisibleColumns([...current]);
+  renderRawColumns();
+}
+
+function rawUseAllColumns() {
+  rawState.columnMenuOpen = true;
+  rawStoreVisibleColumns(rawCols.map(c => c.key));
+  renderRawColumns();
+}
+
+function rawUseKeyColumns() {
+  rawState.columnMenuOpen = true;
+  rawStoreVisibleColumns(RAW_DEFAULT_VISIBLE_COLUMNS.filter(k => rawCols.some(c => c.key === k)));
+  renderRawColumns();
+}
 
 function rawQuery() {
   const p = {page: rawState.page, perPage: rawState.per_page, sort: rawState.sort, dir: rawState.dir, filters: {...rawState.filters}};
@@ -6245,10 +6329,43 @@ async function loadRaw(resetPage) {
   const d = window.App.getRaw(rawQuery());
   if (seq !== rawSeq) return;
   rawCols = d.columns;
+  rawLastData = d;
+  renderRaw(d);
+  rawLoaded = true;
+}
+
+function renderRaw(d) {
+  const el = document.getElementById('rawContent');
+  if (!el) return;
+  const visibleColumns = rawVisibleColumns(d.columns);
   const pages = Math.max(1, Math.ceil(d.total / rawState.per_page));
   const arrow = k => rawState.sort === k ? (rawState.dir === 'asc' ? ' ▲' : ' ▼') : '';
   const focus = rawState.focus;
   rawState.focus = null;
+  const selectedKeys = new Set(rawState.visibleColumns);
+  const search = rawState.columnSearch.trim().toLowerCase();
+  const matchingColumns = d.columns.filter(c =>
+    !search || (c.label + ' ' + c.key).toLowerCase().includes(search));
+  const columnPicker =
+    '<div class="raw-column-picker">' +
+      '<button type="button" class="raw-column-trigger" aria-expanded="' + rawState.columnMenuOpen +
+        '" onclick="rawToggleColumnMenu()">Columns (' + visibleColumns.length + '/' + d.columns.length + ')</button>' +
+      (rawState.columnMenuOpen
+        ? '<div class="raw-column-menu" onclick="event.stopPropagation()">' +
+            '<div class="raw-column-menu-head"><strong>Visible columns</strong>' +
+              '<button type="button" onclick="rawUseKeyColumns()">Key fields</button>' +
+              '<button type="button" onclick="rawUseAllColumns()">All</button></div>' +
+            '<input class="raw-column-search" type="search" value="' + attr(rawState.columnSearch) +
+              '" placeholder="Search columns" aria-label="Search columns" oninput="rawSetColumnSearch(this.value)">' +
+            '<div class="raw-column-options">' +
+              (matchingColumns.length
+                ? matchingColumns.map(c => '<label class="raw-column-option"><input type="checkbox" data-k="' + c.key +
+                    '"' + (selectedKeys.has(c.key) ? ' checked' : '') +
+                    ' onchange="rawSetVisibleColumn(this.dataset.k, this.checked)"><span>' + escHTML(c.label) + '</span></label>').join('')
+                : '<div class="raw-column-empty">No columns match this search.</div>') +
+            '</div></div>'
+        : '') +
+    '</div>';
 
   el.innerHTML =
     '<div class="raw-bar">' +
@@ -6256,6 +6373,7 @@ async function loadRaw(resetPage) {
       '<b>' + d.dup_rows.toLocaleString() + '</b> duplicates · ' +
       '<b>' + d.sum_hours.toLocaleString() + '</b> hours' +
       '<span class="spacer"></span>' +
+      columnPicker +
       '<label>Rows</label><select onchange="rawState.per_page=+this.value;loadRaw(true)">' +
         [25, 50, 100, 250, 500, 1000].map(n => '<option value="' + n + '"' +
           (n === rawState.per_page ? ' selected' : '') + '>' + n + '</option>').join('') +
@@ -6268,14 +6386,14 @@ async function loadRaw(resetPage) {
         (rawState.page >= pages ? ' disabled' : '') + '>&#8594;</button>' +
     '</div>' +
     '<div class="tbl-wrap raw-wrap"><table class="gtable raw"><thead><tr>' +
-      d.columns.map(c => '<th onclick="rawSort(this.dataset.k)" data-k="' + c.key + '">' +
+      visibleColumns.map(c => '<th onclick="rawSort(this.dataset.k)" data-k="' + c.key + '">' +
         escHTML(c.label) + arrow(c.key) + '</th>').join('') +
     '</tr><tr class="frow">' +
-      d.columns.map(c => '<th><input value="' + attr(rawState.filters[c.key] || '') +
+      visibleColumns.map(c => '<th><input value="' + attr(rawState.filters[c.key] || '') +
         '" placeholder="' + (c.key === 'hours' ? '≥ hrs' : 'filter') +
         '" oninput="rawFilter(this.dataset.k, this.value)" data-k="' + c.key + '"></th>').join('') +
     '</tr></thead><tbody>' +
-      (d.items.length ? d.items.map(r => '<tr>' + d.columns.map(c => {
+      (d.items.length ? d.items.map(r => '<tr>' + visibleColumns.map(c => {
         let v = r[c.key];
         if (c.key === 'is_dup') v = v ? '<span class="b-unverified">dup</span>' : '';
         else if (c.key === 'has_child') v = v ? '<span class="b-verified">child</span>' : '';
@@ -6289,10 +6407,8 @@ async function loadRaw(resetPage) {
         else v = escHTML(v == null ? '' : v);
         return '<td>' + v + '</td>';
       }).join('') + '</tr>').join('')
-        : '<tr><td colspan="' + d.columns.length + '">No rows match these filters</td></tr>') +
+        : '<tr><td colspan="' + visibleColumns.length + '">No rows match these filters</td></tr>') +
     '</tbody></table></div>';
-
-  rawLoaded = true;
 
   if (focus && focus.key) {
     const again = el.querySelector('.frow input[data-k="' + focus.key + '"]');
