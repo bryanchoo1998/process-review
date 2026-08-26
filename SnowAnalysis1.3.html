@@ -655,10 +655,11 @@ function getCostCapacityMetrics(opts = {}) {
      GROUP BY COALESCE(NULLIF(TRIM(category),''),'Uncategorised'), COALESCE(agroup,''), COALESCE(country,'')`, groupArgs);
   const closedIncompleteBySource = queryAll(db,
     `SELECT COALESCE(NULLIF(TRIM(source),''),'Unspecified') AS source,
+            COALESCE(NULLIF(TRIM(agroup),''),'Unassigned') AS agroup,
             COUNT(*) AS tickets, COALESCE(SUM(time_worked),0) AS secs
        FROM parent WHERE LOWER(TRIM(COALESCE(state,''))) = 'closed incomplete'${groupSql}
-      GROUP BY COALESCE(NULLIF(TRIM(source),''),'Unspecified')
-      ORDER BY secs DESC, source COLLATE NOCASE`, groupArgs);
+      GROUP BY COALESCE(NULLIF(TRIM(source),''),'Unspecified'), COALESCE(NULLIF(TRIM(agroup),''),'Unassigned')
+      ORDER BY source COLLATE NOCASE, secs DESC, agroup COLLATE NOCASE`, groupArgs);
   const duplicate = currentStats && currentStats.summary ? currentStats.summary : {};
   const result = {
     available: true,
@@ -5787,6 +5788,7 @@ function resetAll() {
   shipmentRegionFlowCache = null;
   closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
   closedIncompleteCategoryExpanded.clear();
+  closedIncompleteSourceExpanded.clear();
   closedIncompleteCategorySort.key = 'secs'; closedIncompleteCategorySort.dir = 'desc';
   currentPage = 1; currentGroups = []; dashLoaded = false;
   dashboardRenderedRevision = -1;
@@ -5820,6 +5822,7 @@ const capacitySettings = { hoursPerDay: 6.6, workDays: 22, emailMinutes: 2, quic
 let capacityLoaded = false;
 const closedIncompleteDrill = { dimension: '', value: '' };
 const closedIncompleteCategoryExpanded = new Set();
+const closedIncompleteSourceExpanded = new Set();
 const closedIncompleteCategorySort = { key: 'secs', dir: 'desc' };
 const capNum = (n, digits = 1) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const capHours = secs => Number(secs || 0) / 3600;
@@ -5838,6 +5841,11 @@ function closedIncompleteDrillSelect(dimension, value) {
 function closedIncompleteCategoryToggle(category) {
   if (closedIncompleteCategoryExpanded.has(category)) closedIncompleteCategoryExpanded.delete(category);
   else closedIncompleteCategoryExpanded.add(category);
+  renderCapacity();
+}
+function closedIncompleteSourceToggle(source) {
+  if (closedIncompleteSourceExpanded.has(source)) closedIncompleteSourceExpanded.delete(source);
+  else closedIncompleteSourceExpanded.add(source);
   renderCapacity();
 }
 function closedIncompleteCategorySortBy(key) {
@@ -5928,14 +5936,31 @@ function renderCapacity() {
   const averageMinutes = r => Number(r.tickets || 0) ? Number(r.secs || 0) / Number(r.tickets) / 60 : 0;
   const breakdownRow = (dimension, r) => '<tr><td>' + drillButton(dimension, r) + '</td><td class="num">' + Number(r.tickets || 0).toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(r)) + ' min</td><td class="num">' + capNum(capHours(r.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(r.secs)), 2) + ' FTE</td></tr>';
   const breakdownTotal = (rows, label) => { const totals = rows.reduce((sum, r) => ({ tickets: sum.tickets + r.tickets, secs: sum.secs + r.secs }), { tickets: 0, secs: 0 }); return '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>' + label + '</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(totals)) + ' min</td><td class="num">' + capNum(capHours(totals.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(totals.secs)), 2) + ' FTE</td></tr></tfoot>'; };
-  const closedIncompleteSourceRows = (data.closedIncompleteBySource || []).map(row => ({
-    source: row.source || 'Unspecified', tickets: Number(row.tickets || 0), secs: Number(row.secs || 0),
-  }));
+  const closedIncompleteSourceMap = new Map();
+  (data.closedIncompleteBySource || []).forEach(input => {
+    const source = input.source || 'Unspecified';
+    const item = closedIncompleteSourceMap.get(source) || { source, tickets: 0, secs: 0, assignmentGroups: new Map() };
+    const group = input.agroup || 'Unassigned';
+    const assignment = item.assignmentGroups.get(group) || { name: group, tickets: 0, secs: 0 };
+    assignment.tickets += Number(input.tickets || 0); assignment.secs += Number(input.secs || 0);
+    item.assignmentGroups.set(group, assignment);
+    item.tickets += Number(input.tickets || 0); item.secs += Number(input.secs || 0);
+    closedIncompleteSourceMap.set(source, item);
+  });
+  const closedIncompleteSourceRows = [...closedIncompleteSourceMap.values()]
+    .sort((a, b) => b.secs - a.secs || a.source.localeCompare(b.source));
   const closedIncompleteSourceSecs = closedIncompleteSourceRows.reduce((sum, row) => sum + row.secs, 0);
   const closedIncompleteSourceTickets = closedIncompleteSourceRows.reduce((sum, row) => sum + row.tickets, 0);
   const closedIncompleteSourceBody = closedIncompleteSourceRows.map(row => {
     const hours = capHours(row.secs);
-    return '<tr><td><b>' + escHTML(row.source) + '</b></td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(row)) + ' min</td><td class="num">' + capNum(hours) + ' h</td><td class="num"><b>' + capNum(fte(hours), 2) + ' FTE</b></td><td class="num">' + (closedIncompleteSourceSecs ? capNum(100 * row.secs / closedIncompleteSourceSecs) + '%' : '—') + '</td></tr>';
+    const expanded = closedIncompleteSourceExpanded.has(row.source);
+    const toggle = '<button type="button" class="capacity-expand-button" aria-expanded="' + expanded + '" aria-label="' + (expanded ? 'Collapse' : 'Expand') + ' assignment groups for ' + attr(row.source) + '" onclick="closedIncompleteSourceToggle(this.dataset.value)" data-value="' + attr(row.source) + '">' + (expanded ? '▾' : '▸') + '</button>';
+    const main = '<tr><td>' + toggle + '<b>' + escHTML(row.source) + '</b></td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(row)) + ' min</td><td class="num">' + capNum(hours) + ' h</td><td class="num"><b>' + capNum(fte(hours), 2) + ' FTE</b></td><td class="num">' + (closedIncompleteSourceSecs ? capNum(100 * row.secs / closedIncompleteSourceSecs) + '%' : '—') + '</td></tr>';
+    if (!expanded) return main;
+    const assignments = [...row.assignmentGroups.values()].sort((a, b) => b.secs - a.secs || b.tickets - a.tickets || a.name.localeCompare(b.name));
+    const assignmentBody = assignments.map(item => '<tr><td>' + escHTML(item.name) + '</td><td class="num">' + item.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(item)) + ' min</td><td class="num">' + capNum(capHours(item.secs)) + ' h</td><td class="num"><b>' + capNum(fte(capHours(item.secs)), 2) + ' FTE</b></td><td class="num">' + (row.secs ? capNum(100 * item.secs / row.secs) + '%' : '—') + '</td></tr>').join('') || '<tr><td colspan="6">No assignment groups in this source.</td></tr>';
+    const assignmentTable = '<div class="capacity-assignment-panel"><div class="note" style="margin-bottom:6px"><b>' + escHTML(row.source) + '</b> — assignment groups</div><table class="gtable"><thead><tr><th>Assignment group</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th><th class="num">FTE share of source</th></tr></thead><tbody>' + assignmentBody + '</tbody><tfoot><tr style="background:rgba(18,50,74,.06);font-weight:700"><td>Assignment-group total</td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(averageMinutes(row)) + ' min</td><td class="num">' + capNum(hours) + ' h</td><td class="num">' + capNum(fte(hours), 2) + ' FTE</td><td class="num">100.0%</td></tr></tfoot></table></div>';
+    return main + '<tr class="capacity-assignment-detail"><td colspan="6">' + assignmentTable + '</td></tr>';
   }).join('') || '<tr><td colspan="6">No Closed Incomplete tickets in scope.</td></tr>';
   const closedIncompleteSourceTotal = '<tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>Total</td><td class="num">' + closedIncompleteSourceTickets.toLocaleString() + '</td><td class="num">' + capNum(closedIncompleteSourceTickets ? closedIncompleteSourceSecs / closedIncompleteSourceTickets / 60 : 0) + ' min</td><td class="num">' + capNum(capHours(closedIncompleteSourceSecs)) + ' h</td><td class="num">' + capNum(fte(capHours(closedIncompleteSourceSecs)), 2) + ' FTE</td><td class="num">100.0%</td></tr></tfoot>';
   const assignmentRowsForCategory = category => {
@@ -6029,7 +6054,7 @@ function renderCapacity() {
     '</tbody></table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Use the caret to expand a category into assignment groups. Click the category name to show its region split, and click any column heading to sort. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' + categorySortHeader('Category', 'name') + categorySortHeader('Tickets', 'tickets', true) + categorySortHeader('Average / ticket', 'avgMinutes', true) + categorySortHeader('Logged effort', 'secs', true) + categorySortHeader('FTE', 'fte', true) + '</tr></thead><tbody>' + (categoryBreakdownRows || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
     '<div class="chart-card"><h3>Closed Incomplete — by region ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Click a region to show its category split. Region is derived from assignment group and country. ' + (closedIncompleteDrill.dimension === 'category' ? 'Showing regions for category “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'category\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (regionRows.map(r => breakdownRow('region', r)).join('') || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(regionRows, closedIncompleteDrill.dimension === 'category' ? 'Total (selected category)' : 'Total (all regions)') + '</table></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>Closed Incomplete — FTE by open from ' + deckTag('32') + '</h3><div class="note">This uses the original <b>open_from</b> field from the uploaded CSV. Each source&apos;s FTE = its Closed Incomplete logged effort ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. The total reconciles to Closed Incomplete handling above.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Open from</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th><th class="num">FTE share</th></tr></thead><tbody>' + closedIncompleteSourceBody + '</tbody>' + closedIncompleteSourceTotal + '</table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Closed Incomplete — FTE by open from ' + deckTag('32') + '</h3><div class="note">This uses the original <b>open_from</b> field from the uploaded CSV. Each source&apos;s FTE = its Closed Incomplete logged effort ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. Use the caret to expand a source into assignment groups; each assignment-group total reconciles to its source. The table total reconciles to Closed Incomplete handling above.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Open from</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th><th class="num">FTE share</th></tr></thead><tbody>' + closedIncompleteSourceBody + '</tbody>' + closedIncompleteSourceTotal + '</table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full capacity-qb"><h3>Quick Booking — live country comparison ' + deckTag('15') + '</h3><div class="note">Derived from category = Quick Booking in the uploaded CSV. “Over threshold” uses the editable threshold above and time_worked.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country</th><th class="num">Tickets</th><th class="num">Average time</th><th class="num">Over threshold</th><th class="num">Logged effort</th></tr></thead><tbody>' + qbRows + '</tbody></table></div></div></div>';
   capacityLoaded = true;
 }
