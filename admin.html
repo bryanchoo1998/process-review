@@ -707,7 +707,7 @@ function closeModal(result){
   if(r) r(result);
 }
 
-function askText({title, body='', label='', value='', okText='Create', placeholder=''}){
+function askText({title, body='', label='', value='', okText='Create', placeholder='', inputType='text'}){
   return new Promise(resolve=>{
     modalResolve = resolve;
     document.getElementById('mTitle').textContent = title;
@@ -717,7 +717,7 @@ function askText({title, body='', label='', value='', okText='Create', placehold
     document.getElementById('mLabel').textContent = label;
     document.getElementById('mErr').textContent = '';
     const inp = document.getElementById('mInput');
-    inp.value = value; inp.placeholder = placeholder;
+    inp.type = inputType; inp.value = value; inp.placeholder = placeholder;
     document.getElementById('mOk').textContent = okText;
     document.getElementById('mOk').className = 'btn primary';
     document.getElementById('modalBack').classList.add('show');
@@ -744,7 +744,7 @@ document.getElementById('mOk').addEventListener('click', ()=>{
   const wrap = document.getElementById('mFieldWrap');
   if(wrap.style.display === 'none'){ closeModal(true); return; }
   const v = document.getElementById('mInput').value.trim();
-  if(!v){ document.getElementById('mErr').textContent = 'Please enter a name.'; return; }
+  if(!v){ document.getElementById('mErr').textContent = 'Please enter a value.'; return; }
   closeModal(v);
 });
 document.getElementById('mInput').addEventListener('keydown', e=>{
@@ -756,6 +756,15 @@ document.getElementById('modalBack').addEventListener('mousedown', e=>{
 document.addEventListener('keydown', e=>{
   if(e.key === 'Escape' && modalResolve) closeModal(null);
 });
+
+function askDeletePassword(action){
+  return askText({
+    title:'Deletion password required',
+    body:`Enter the deletion password to ${action}.`,
+    label:'Deletion password', okText:'Delete',
+    placeholder:'Enter password', inputType:'password'
+  });
+}
 
 /* ============================================================
    ANSWER SETS + CLASSIFICATION
@@ -860,11 +869,11 @@ function aIsFor(step){
 }
 
 async function saveIndex(){ try{ await sSet('proc:index', DB.index); }catch(e){ saveFailed(e.message); } }
-async function saveProc(){
+async function saveProc(deletionPassword){
   if(!PROC) return;
   try{
     PROC.updated = new Date().toISOString();
-    await sSet('proc:'+PROC.id, PROC);
+    await sSet('proc:'+PROC.id, PROC, deletionPassword);
     const row = DB.index.find(r=>r.id===PROC.id);
     if(row){ row.name = PROC.name; row.updated = PROC.updated; row.steps = PROC.steps.length; }
     await saveIndex();
@@ -1626,7 +1635,12 @@ function addSub(i,which){
   arr.push({ref:next, text:''});
   saveProc(); render();
 }
-function delSub(i,which,j){ PROC.steps[i][which].splice(j,1); saveProc(); render(); }
+async function delSub(i,which,j){
+  const password = await askDeletePassword('delete this sub-step');
+  if(!password) return;
+  PROC.steps[i][which].splice(j,1);
+  await saveProc(password); render();
+}
 function addStep(){
   PROC.steps.push({ id:(PROC.steps.length+1)+'.0', name:'', office:'back', agree:false, local:[], global:[], note:'' });
   view.openStep = PROC.steps.length-1;
@@ -1639,11 +1653,13 @@ async function delStep(i){
     okText:'Delete step', danger:true
   });
   if(!ok) return;
+  const password = await askDeletePassword('delete this step and its session answers');
+  if(!password) return;
   const sid = PROC.steps[i].id;
   PROC.steps.splice(i,1);
   delete SESS.responses[sid]; delete SESS.assign[sid];
   view.openStep = null;
-  saveProc(); saveSession(); render();
+  await saveProc(password); saveSession(); render();
 }
 function moveStep(i,d){
   const j=i+d; if(j<0||j>=PROC.steps.length) return;
@@ -1657,10 +1673,14 @@ async function deleteProcess(){
     okText:'Delete process', danger:true
   });
   if(!ok) return;
-  await sDel('proc:'+PROC.id); await sDel('sess:'+PROC.id);
-  DB.index = DB.index.filter(r=>r.id!==PROC.id);
-  await saveIndex();
-  PROC=null; nav({v:'home'});
+  const password = await askDeletePassword(`delete "${PROC.name}" and all its session answers`);
+  if(!password) return;
+  try{
+    await sDel('proc:'+PROC.id, password);
+    DB.index = DB.index.filter(r=>r.id!==PROC.id);
+    await saveIndex();
+    PROC=null; nav({v:'home'});
+  }catch(e){ saveFailed(e.message); }
 }
 
 /* ---------- RUNNER ---------- */
@@ -2715,8 +2735,10 @@ async function deleteSession(id){
     okText:'Delete', danger:true
   });
   if(!ok) return;
+  const password = await askDeletePassword('delete this session and all its answers');
+  if(!password) return;
   try{
-    await dbDeleteSession(id);
+    await dbDeleteSession(id, password);
     await loadSessions(document.getElementById('sessFilter').value);
   }catch(e){ saveFailed(e.message); }
 }

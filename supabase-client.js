@@ -113,7 +113,7 @@ async function loadProcess(id){
   };
 }
 
-async function saveProcess(p){
+async function saveProcess(p, deletionPassword){
   const { data, error } = await sb.from('process').upsert({
     id: p.id, name: p.name, domain: p.domain,
     global_label: p.globalLabel, local_label: p.localLabel
@@ -141,8 +141,7 @@ async function saveProcess(p){
   // UI. Ordinary settings changes never enter this branch.
   const removedStepIds = (oldSteps || []).map(s => s.id).filter(id => !keptStepIds.has(id));
   if(removedStepIds.length){
-    const { error: e } = await sb.from('step').delete().in('id', removedStepIds);
-    if(e) throw e;
+    await deleteSteps(removedStepIds, deletionPassword);
   }
 
   for(const [i, s] of p.steps.entries()){
@@ -161,13 +160,13 @@ async function saveProcess(p){
       if(e) throw e;
       stepId = s._id = st.id;
     }
-    await saveSubsteps(stepId, 'global', s.global || []);
-    await saveSubsteps(stepId, 'local', s.local || []);
+    await saveSubsteps(stepId, 'global', s.global || [], deletionPassword);
+    await saveSubsteps(stepId, 'local', s.local || [], deletionPassword);
   }
   return pid;
 }
 
-async function saveSubsteps(stepId, version, substeps){
+async function saveSubsteps(stepId, version, substeps, deletionPassword){
   const { data: existing, error: loadError } = await sb.from('substep')
     .select('id').eq('step_id', stepId).eq('version', version);
   if(loadError) throw loadError;
@@ -182,8 +181,7 @@ async function saveSubsteps(stepId, version, substeps){
 
   const removedIds = (existing || []).map(s => s.id).filter(id => !keptIds.has(id));
   if(removedIds.length){
-    const { error: e } = await sb.from('substep').delete().in('id', removedIds);
-    if(e) throw e;
+    await deleteSubsteps(removedIds, deletionPassword);
   }
 
   for(const [i, s] of substeps.entries()){
@@ -200,6 +198,30 @@ async function saveSubsteps(stepId, version, substeps){
       s._id = data.id;
     }
   }
+}
+
+async function passwordDelete(functionName, args){
+  if(!args.p_password) throw new Error('Enter the deletion password to continue.');
+  const { error } = await sb.rpc(functionName, args);
+  if(error) throw error;
+}
+
+async function deleteSteps(stepIds, password){
+  await passwordDelete('delete_steps_with_password', {
+    p_step_ids: stepIds, p_password: password
+  });
+}
+
+async function deleteSubsteps(substepIds, password){
+  await passwordDelete('delete_substeps_with_password', {
+    p_substep_ids: substepIds, p_password: password
+  });
+}
+
+async function dbDeleteProcess(processId, password){
+  await passwordDelete('delete_process_with_password', {
+    p_process_id: processId, p_password: password
+  });
 }
 
 /* ------------------------------------------------------------
@@ -301,7 +323,6 @@ async function dbSaveSession(processId, S){
     if(error) throw error;
 
     if(r.picks?.length){
-      await sb.from('response_pick').delete().eq('response_id', resp.id);
       const aIs = S.assign[stepNo];
       const { data: subs } = await sb.from('substep')
         .select('id, version, ref').eq('step_id', idOf[stepNo]);
@@ -317,7 +338,10 @@ async function dbSaveSession(processId, S){
         return hit ? { response_id: resp.id, seq: i+1, source: version, substep_id: hit.id } : null;
       }).filter(Boolean);
 
-      if(rows.length) await sb.from('response_pick').insert(rows);
+      const { error: picksError } = await sb.rpc('replace_response_picks', {
+        p_response_id: resp.id, p_picks: rows
+      });
+      if(picksError) throw picksError;
     }
   }
 }
@@ -363,10 +387,11 @@ async function dbListSessions(processId){
   }));
 }
 
-async function dbDeleteSession(sessionId){
+async function dbDeleteSession(sessionId, password){
   // cascades to session_card_assignment / response / response_pick
-  const { error } = await sb.from('session').delete().eq('id', sessionId);
-  if(error) throw error;
+  await passwordDelete('delete_session_with_password', {
+    p_session_id: sessionId, p_password: password
+  });
 }
 
 /* ------------------------------------------------------------
@@ -466,23 +491,22 @@ async function sGet(key, fallback){
   }
 }
 
-async function sSet(key, val){
+async function sSet(key, val, deletionPassword){
   // Errors propagate to the caller on purpose — the apps surface a
   // visible "not saved" hint when a write fails, instead of silently
   // pretending everything persisted.
   if(key === 'proc:index') return;                   // derived, nothing to write
-  if(key.startsWith('proc:')) return await saveProcess(val);
+  if(key.startsWith('proc:')) return await saveProcess(val, deletionPassword);
   if(key.startsWith('sess:')) return await dbSaveSession(key.slice(5), val);
 }
 
-async function sDel(key){
-  try{
-    if(key.startsWith('proc:')){
-      await sb.from('process').update({ archived: true }).eq('id', key.slice(5));
-    }
-    if(key.startsWith('sess:')){
-      await sb.from('session').update({ status: 'abandoned' })
-        .eq('process_id', key.slice(5)).eq('status', 'in_progress');
-    }
-  }catch(e){ console.error('sDel', key, e); }
+async function sDel(key, deletionPassword){
+  if(key.startsWith('proc:')){
+    return await dbDeleteProcess(key.slice(5), deletionPassword);
+  }
+  if(key.startsWith('sess:')){
+    const { error } = await sb.from('session').update({ status: 'abandoned' })
+      .eq('process_id', key.slice(5)).eq('status', 'in_progress');
+    if(error) throw error;
+  }
 }
