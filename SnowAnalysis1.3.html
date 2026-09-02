@@ -5757,6 +5757,7 @@ function onDataReady() {
   descriptionMatchedAnalysisCache.clear();
   quickBookingNoShipmentAnalysisCache.clear();
   reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map(), categoryRegionTimeGroups: new Map() };
+  timeBasedCalculationCache = { key: null, rows: [] };
   shipmentRegionFlowCache = null;
   modeState.mode = 'all';
   // Open the primary management view only after every cache has been reset.
@@ -5786,6 +5787,7 @@ function resetAll() {
   descriptionMatchedAnalysisCache.clear();
   quickBookingNoShipmentAnalysisCache.clear();
   reasonAnalysisCache = { key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [], reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map(), categoryRegionTimeGroups: new Map() };
+  timeBasedCalculationCache = { key: null, rows: [] };
   shipmentRegionFlowCache = null;
   closedIncompleteDrill.dimension = ''; closedIncompleteDrill.value = '';
   closedIncompleteCategoryExpanded.clear();
@@ -5819,7 +5821,7 @@ const escHTML = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const attr = s => escHTML(s).replace(/\n/g, ' ');
 
-const capacitySettings = { hoursPerDay: 6.6, workDays: 22, emailMinutes: 2, quickBookingThreshold: 7, reportVolume: 19300, reportMinutes: 5, afterShiftHours: 595 };
+const capacitySettings = { hoursPerDay: 6.6, workDays: 22, emailMinutes: 2, quickBookingThreshold: 7, afterShiftHours: 595 };
 let capacityLoaded = false;
 const closedIncompleteDrill = { dimension: '', value: '' };
 const closedIncompleteCategoryExpanded = new Set();
@@ -5869,7 +5871,14 @@ function renderCapacity() {
   const closedIncompleteHours = capHours(data.closedIncomplete.secs);
   const siHours = capHours(data.siReason.secs);
   const invoiceHours = capHours(data.invoicing.secs);
-  const reportHours = Math.max(0, capacitySettings.reportVolume) * Math.max(0, capacitySettings.reportMinutes) / 60;
+  const timeBasedFilter = reasonAnalysisFilterClause('p');
+  const timeBasedInput = queryWithRetry(getPrimaryDB(),
+    `SELECT COUNT(*) tickets, SUM(CASE WHEN COALESCE(p.time_worked, 0) > 0 THEN 1 ELSE 0 END) timed_tickets,
+            SUM(COALESCE(p.time_worked, 0)) secs
+       FROM parent p
+      WHERE LOWER(TRIM(COALESCE(p.source, ''))) = 'time based'${timeBasedFilter.sql}`,
+    timeBasedFilter.args)[0] || { tickets: 0, timed_tickets: 0, secs: 0 };
+  const timeBasedHours = capHours(timeBasedInput.secs);
   const afterShiftHours = Math.max(0, capacitySettings.afterShiftHours);
   const reasonMatchedRows = (data.reasonCategoryTiming || []).filter(row => Number(row.reason_tickets || 0) > 0 && Number(row.blank_tickets || 0) > 0).map(row => {
     const reasonTickets = Number(row.reason_tickets || 0);
@@ -5886,7 +5895,7 @@ function renderCapacity() {
   const reasonImpactFte = fte(reasonImpactHours);
   const closedIncompleteFte = fte(closedIncompleteHours);
   const emailFte = fte(emailHours);
-  const reportFte = fte(reportHours);
+  const timeBasedFte = fte(timeBasedHours);
   const milestoneModes = new Map((data.milestoneModeWaste || []).map(r => [r.mode, r]));
   const mode = name => milestoneModes.get(name) || { mode: name, jobs: 0, jobs_over_two: 0, jobs_two_or_fewer: 0, avg_over_two_secs: 0, avg_two_or_fewer_secs: 0, secs: 0 };
   const exportAir = mode('Export Air'), exportSea = mode('Export Sea');
@@ -5900,7 +5909,7 @@ function renderCapacity() {
   });
   const multipleCheckWasteHours = modeWasteRows.reduce((sum, item) => sum + item.hours, 0);
   const multipleCheckWasteFte = fte(multipleCheckWasteHours);
-  const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + reportFte + multipleCheckWasteFte;
+  const revisedSizedFloor = closedIncompleteFte + emailFte + reasonImpactFte + timeBasedFte + multipleCheckWasteFte;
   const deckFloorDelta = revisedSizedFloor - 83.1;
   const qbRows = data.quickBooking.map(r => {
     const avgMin = Number(r.avg_secs || 0) / 60;
@@ -6006,19 +6015,17 @@ function renderCapacity() {
       '<label>Working days / month<input type="number" min="0" step="1" value="' + capacitySettings.workDays + '" oninput="capacityInput(\'workDays\',this.value)"></label>' +
       '<label>Time to process email (Mins)<input type="number" min="0" step="0.1" value="' + capacitySettings.emailMinutes + '" oninput="capacityInput(\'emailMinutes\',this.value)"></label>' +
       '<label>QB threshold (min)<input type="number" min="0" step="0.5" value="' + capacitySettings.quickBookingThreshold + '" oninput="capacityInput(\'quickBookingThreshold\',this.value)"></label>' +
-      '<label>Number of Report Uploads a Month<input type="number" min="0" step="100" value="' + capacitySettings.reportVolume + '" oninput="capacityInput(\'reportVolume\',this.value)"></label>' +
-      '<label>Time to create a report (Mins)<input type="number" min="0" step="0.5" value="' + capacitySettings.reportMinutes + '" oninput="capacityInput(\'reportMinutes\',this.value)"></label>' +
       '<label>After-shift hours<input type="number" min="0" step="1" value="' + capacitySettings.afterShiftHours + '" oninput="capacityInput(\'afterShiftHours\',this.value)"></label>' +
       '<span class="scope">Scope: <b>' + escHTML(data.scope) + '</b> · Monthly FTE denominator: <b>' + capNum(monthlyHours) + ' h</b></span></div>' +
-    '<div class="capacity-warning"><b>How to read this:</b> green rows are directly calculated from the uploaded CSV. Closed Incomplete is a proxy: it assumes each ticket in that state is duplicate or irrelevant work. Amber rows are formula models that need a business input because ServiceNow does not record CW1 report volume or hours worked outside shift. The rows may overlap; do not sum them as a cost total without reconciling their scopes.</div>' +
-    '<div class="reason-math"><div class="reason-math-head"><div><h3>Revised sized floor — five Slide 32 components ' + deckTag('32 / 34') + '</h3><div class="note">The deck used 2.1 + 54 + 16 + 11 = 83.1 FTE. This view replaces the two unsupported estimates with CSV calculations and adds Multiple Check Waste for Milestone E6/E8.</div></div></div><div class="reason-math-flow">' +
+    '<div class="capacity-warning"><b>How to read this:</b> green rows are directly calculated from the uploaded CSV. Closed Incomplete is a proxy: it assumes each ticket in that state is duplicate or irrelevant work. After-shift invoicing remains a manual business input. The rows may overlap; do not sum them as a cost total without reconciling their scopes.</div>' +
+    '<div class="reason-math"><div class="reason-math-head"><div><h3>Revised sized floor — five Slide 32 components ' + deckTag('32 / 34') + '</h3><div class="note">The deck used 2.1 + 54 + 16 + 11 = 83.1 FTE. This view replaces the manual Report uploads assumption with live Time-based Capacity and adds Multiple Check Waste for Milestone E6/E8.</div></div></div><div class="reason-math-flow">' +
       '<div class="reason-math-step"><div class="reason-math-label">Closed Incomplete</div><div class="reason-math-value">' + capNum(closedIncompleteFte, 2) + ' FTE</div><div class="reason-math-detail">Replaces deck 2.1 · CSV logged time</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Email processing</div><div class="reason-math-value">' + capNum(emailFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(data.email.tickets || 0).toLocaleString() + ' emails × ' + capNum(capacitySettings.emailMinutes) + ' min · excludes Closed Incomplete</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Reason timing gap</div><div class="reason-math-value">' + capNum(reasonImpactFte, 2) + ' FTE</div><div class="reason-math-detail">Category-matched weighted gap</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
-      '<div class="reason-math-step"><div class="reason-math-label">Report uploads</div><div class="reason-math-value">' + capNum(reportFte, 2) + ' FTE</div><div class="reason-math-detail">' + capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min</div></div>' +
+      '<div class="reason-math-step"><div class="reason-math-label">Time-based Capacity</div><div class="reason-math-value">' + capNum(timeBasedFte, 2) + ' FTE</div><div class="reason-math-detail">' + Number(timeBasedInput.tickets || 0).toLocaleString() + ' tickets · ' + capNum(timeBasedHours) + ' logged hours</div></div>' +
       '<div class="reason-math-arrow">+</div>' +
       '<div class="reason-math-step"><div class="reason-math-label">Multiple Check Waste</div><div class="reason-math-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="reason-math-detail">Same-area Shipment IDs: >2 vs ≤2 tickets</div></div>' +
       '<div class="reason-math-arrow">=</div>' +
@@ -6041,7 +6048,7 @@ function renderCapacity() {
       '<div class="kpi"><div class="kpi-label">Reason-coded SI effort ' + deckTag('19') + '</div><div class="kpi-value">' + capNum(fte(siHours), 2) + ' FTE</div><div class="kpi-sub">' + capNum(siHours) + ' logged hours</div></div>' +
       '<div class="kpi"><div class="kpi-label">Closed Incomplete handling ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(fte(closedIncompleteHours), 2) + ' FTE</div><div class="kpi-sub">' + Number(data.closedIncomplete.tickets || 0).toLocaleString() + ' tickets · ' + capNum(closedIncompleteHours) + ' logged hours</div></div>' +
       '<div class="kpi"><div class="kpi-label">Multiple Check Waste ' + deckTag('32') + '</div><div class="kpi-value">' + capNum(multipleCheckWasteFte, 2) + ' FTE</div><div class="kpi-sub">Same-area Shipment IDs: >2 vs ≤2 tickets</div></div>' +
-      '<div class="kpi"><div class="kpi-label">Report generation model ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(fte(reportHours), 2) + ' FTE</div><div class="kpi-sub">Editable report-volume assumption</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Time-based Capacity ' + deckTag('32 / 34') + '</div><div class="kpi-value">' + capNum(timeBasedFte, 2) + ' FTE</div><div class="kpi-sub">' + Number(timeBasedInput.tickets || 0).toLocaleString() + ' tickets · ' + capNum(timeBasedHours) + ' logged hours</div></div>' +
     '</div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>Calculation register</h3><div class="note">Inputs, formula and result are all visible. A change to an input above recalculates this register immediately.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Metric</th><th>Formula</th><th class="num">Hours</th><th class="num">FTE</th><th>Data status</th></tr></thead><tbody>' +
       row('Email-to-SNOW handling', '32', Number(data.email.tickets || 0).toLocaleString() + ' email-origin tickets excluding Closed Incomplete', 'tickets × ' + capNum(capacitySettings.emailMinutes) + ' min ÷ 60', emailHours, fte(emailHours), 'CSV calculated', 'Closed Incomplete is excluded to avoid overlap; time-per-ticket is editable') +
@@ -6050,7 +6057,7 @@ function renderCapacity() {
       row('Shipping Instruction reason-coded effort', '19', Number(data.siReason.tickets || 0).toLocaleString() + ' SI tickets with a reason', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), siHours, fte(siHours), 'CSV calculated', 'Reason-coded effort; not elapsed waiting time') +
       row('Invoicing logged effort', '24', Number(data.invoicing.tickets || 0).toLocaleString() + ' invoicing tickets', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), invoiceHours, fte(invoiceHours), 'CSV calculated', 'Logged ticket work, not after-shift work') +
       row('Multiple Check Waste — Milestone E6/E8', '32', modeWasteRows.reduce((sum, item) => sum + Number(item.row.jobs_over_two || 0), 0).toLocaleString() + ' shipment IDs with >2 tickets across four areas', '(average shipment time >2 tickets − average shipment time ≤2 tickets) × shipment IDs >2 ÷ 60 ÷ ' + capNum(monthlyHours), multipleCheckWasteHours, multipleCheckWasteFte, 'CSV calculated', 'Uses the same Shipment-ID allocation as the Milestone E6/E8 table') +
-      row('CW1 report-generation model', '32 / 34', capNum(capacitySettings.reportVolume, 0) + ' reports × ' + capNum(capacitySettings.reportMinutes) + ' min', 'reports × min/report ÷ 60 ÷ ' + capNum(monthlyHours), reportHours, fte(reportHours), 'Manual input', 'CSV does not contain CW1 report count') +
+      row('Time-based Capacity', '32 / 34', Number(timeBasedInput.tickets || 0).toLocaleString() + ' tickets where Open From = Time based', 'SUM(time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours), timeBasedHours, timeBasedFte, 'CSV calculated', Number(timeBasedInput.timed_tickets || 0).toLocaleString() + ' tickets have logged time; grouped category detail is in Time-based Capacity') +
       row('After-shift invoicing model', '24', capNum(afterShiftHours) + ' stated after-shift hours', 'after-shift hours ÷ ' + capNum(monthlyHours), afterShiftHours, fte(afterShiftHours), 'Manual input', 'CSV does not identify off-shift work') +
     '</tbody></table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Use the caret to expand a category into assignment groups. Click the category name to show its region split, and click any column heading to sort. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' + categorySortHeader('Category', 'name') + categorySortHeader('Tickets', 'tickets', true) + categorySortHeader('Average / ticket', 'avgMinutes', true) + categorySortHeader('Logged effort', 'secs', true) + categorySortHeader('FTE', 'fte', true) + '</tr></thead><tbody>' + (categoryBreakdownRows || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
@@ -9019,12 +9026,73 @@ let reasonAnalysisCache = {
   key: null, reasonRows: [], categoryTotals: new Map(), timeGroups: [],
   reasonTimeGroups: new Map(), reasonRegionTimeGroups: new Map(), categoryRegionTimeGroups: new Map(),
 };
+const timeBasedCalculationState = { sortKey: 'secs', sortDir: 'desc' };
+let timeBasedCalculationCache = { key: null, rows: [] };
 
 function reasonAnalysisFilterClause(alias = 'p') {
   const groups = (currentGroups || []).filter(Boolean);
   return groups.length
     ? { sql: ` AND ${alias}.agroup IN (${groups.map(() => '?').join(',')})`, args: groups }
     : { sql: '', args: [] };
+}
+
+function timeBasedCalculationSort(key) {
+  if (timeBasedCalculationState.sortKey === key) timeBasedCalculationState.sortDir = timeBasedCalculationState.sortDir === 'asc' ? 'desc' : 'asc';
+  else { timeBasedCalculationState.sortKey = key; timeBasedCalculationState.sortDir = key === 'category' ? 'asc' : 'desc'; }
+  renderTimeBasedCalculation();
+}
+
+function renderTimeBasedCalculation() {
+  const root = document.getElementById('timeBasedCalculationSection');
+  if (!root) return;
+  const db = getPrimaryDB();
+  const filter = reasonAnalysisFilterClause('p');
+  const cacheKey = (currentGroups || []).filter(Boolean).slice().sort().join('\x1f');
+  if (timeBasedCalculationCache.key !== cacheKey) {
+    const rows = queryWithRetry(db,
+      `SELECT COALESCE(NULLIF(TRIM(p.category), ''), '(blank)') category,
+              COUNT(*) tickets,
+              SUM(CASE WHEN COALESCE(p.time_worked, 0) > 0 THEN 1 ELSE 0 END) timed_tickets,
+              SUM(COALESCE(p.time_worked, 0)) secs
+         FROM parent p
+        WHERE LOWER(TRIM(COALESCE(p.source, ''))) = 'time based'${filter.sql}
+        GROUP BY COALESCE(NULLIF(TRIM(p.category), ''), '(blank)')`, filter.args);
+    timeBasedCalculationCache = { key: cacheKey, rows };
+  }
+  const monthlyHours = Math.max(0, capacitySettings.hoursPerDay * capacitySettings.workDays);
+  const rows = timeBasedCalculationCache.rows.map(row => ({
+    ...row,
+    averageMinutes: row.tickets ? Number(row.secs || 0) / row.tickets / 60 : 0,
+    hours: capHours(row.secs),
+    fte: monthlyHours ? capHours(row.secs) / monthlyHours : 0,
+  }));
+  const { sortKey, sortDir } = timeBasedCalculationState;
+  rows.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    const delta = typeof av === 'number' && typeof bv === 'number'
+      ? av - bv : String(av || '').localeCompare(String(bv || ''), undefined, { numeric: true });
+    return delta * (sortDir === 'asc' ? 1 : -1) || a.category.localeCompare(b.category);
+  });
+  const totals = rows.reduce((sum, row) => ({
+    tickets: sum.tickets + Number(row.tickets || 0),
+    timedTickets: sum.timedTickets + Number(row.timed_tickets || 0),
+    secs: sum.secs + Number(row.secs || 0),
+  }), { tickets: 0, timedTickets: 0, secs: 0 });
+  const totalHours = capHours(totals.secs);
+  const totalFte = monthlyHours ? totalHours / monthlyHours : 0;
+  const arrow = key => timeBasedCalculationState.sortKey === key ? (timeBasedCalculationState.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const header = (label, key, numeric = false) => '<th class="' + (numeric ? 'num' : '') + '" onclick="timeBasedCalculationSort(\'' + key + '\')" style="cursor:pointer">' + label + arrow(key) + '</th>';
+  const dataRows = rows.map(row => '<tr><td><b>' + escHTML(row.category) + '</b></td><td class="num">' + Number(row.tickets).toLocaleString() + '</td><td class="num">' + Number(row.timed_tickets).toLocaleString() + '</td><td class="num">' + capNum(row.averageMinutes) + ' min</td><td class="num">' + capNum(row.hours) + ' h</td><td class="calc">' + capNum(row.hours) + ' ÷ ' + capNum(monthlyHours) + '</td><td class="num"><b>' + capNum(row.fte, 2) + ' FTE</b></td></tr>').join('') || '<tr><td colspan="7">No tickets with Open From = Time based match the current scope.</td></tr>';
+  root.innerHTML =
+    '<div class="chart-grid"><div class="chart-card full"><h3>Time-based category — logged effort and FTE</h3><div class="note">This view uses every uploaded parent ticket where <b>Open From = Time based</b>. It groups those tickets by category, sums <b>time_worked</b>, and converts that logged effort to FTE using the same monthly denominator as Cost &amp; Capacity. It follows the selected team filter and includes zero-time tickets in the ticket count.</div><div class="kpi-row" style="margin-top:12px">' +
+      '<div class="kpi info"><div class="kpi-label">Time-based tickets</div><div class="kpi-value">' + totals.tickets.toLocaleString() + '</div><div class="kpi-sub">across ' + rows.length.toLocaleString() + ' categories</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Tickets with logged time</div><div class="kpi-value">' + totals.timedTickets.toLocaleString() + '</div><div class="kpi-sub">' + (totals.tickets ? capNum(100 * totals.timedTickets / totals.tickets) + '%' : '0.0%') + ' of time-based tickets</div></div>' +
+      '<div class="kpi purple"><div class="kpi-label">Total logged effort</div><div class="kpi-value">' + capNum(totalHours) + ' h</div><div class="kpi-sub">SUM(time_worked) ÷ 3,600</div></div>' +
+      '<div class="kpi"><div class="kpi-label">Time-based capacity</div><div class="kpi-value">' + capNum(totalFte, 2) + ' FTE</div><div class="kpi-sub">' + capNum(totalHours) + ' h ÷ ' + capNum(monthlyHours) + ' h/FTE</div></div>' +
+    '</div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Calculation by category</h3><div class="note"><b>Formula:</b> category FTE = SUM(category time_worked) ÷ 3,600 ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. Click a heading to sort.</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' +
+      header('Category', 'category') + header('Tickets', 'tickets', true) + header('Tickets with logged time', 'timed_tickets', true) + header('Average time / ticket', 'averageMinutes', true) + header('Total time worked', 'hours', true) + '<th>Calculation</th>' + header('FTE', 'fte', true) +
+    '</tr></thead><tbody>' + dataRows + '</tbody><tfoot><tr style="background:rgba(18,50,74,.08);font-weight:700"><td>All time-based categories</td><td class="num">' + totals.tickets.toLocaleString() + '</td><td class="num">' + totals.timedTickets.toLocaleString() + '</td><td class="num">' + (totals.tickets ? capNum(totalHours * 60 / totals.tickets) + ' min' : '—') + '</td><td class="num">' + capNum(totalHours) + ' h</td><td class="calc">' + capNum(totalHours) + ' ÷ ' + capNum(monthlyHours) + '</td><td class="num"><b>' + capNum(totalFte, 2) + ' FTE</b></td></tr></tfoot></table></div></div></div>';
 }
 
 function reasonMedian(values) {
@@ -9358,6 +9426,10 @@ function dashTab(page) {
   if (page === 'shipment-region') queueDashboardSection(
     page, shipmentRegionRoot, 'lazyShipmentRegion', 'Preparing Shipment and Region',
     'Building regional process flows from Shipment IDs.', renderShipmentRegionSection);
+  const timeBasedRoot = document.getElementById('timeBasedCalculationSection');
+  if (page === 'time-based') queueDashboardSection(
+    page, timeBasedRoot, 'lazyTimeBased', 'Preparing Time-based Capacity',
+    'Summing logged time by Time based category.', renderTimeBasedCalculation);
   const reasonRoot = document.getElementById('reasonAnalysisSection');
   if (page === 'reason-time') queueDashboardSection(
     page, reasonRoot, 'lazyReasonAnalysis', 'Preparing Reason Analysis and Time',
@@ -11188,6 +11260,7 @@ function renderLargeFileDashboard(data) {
   destroyDashboardCharts();
   root.innerHTML = '<div class="dash-tabs">' +
     '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
+    '<button class="dash-tab" data-page="time-based" onclick="dashTab(\'time-based\')">Time-based Capacity</button>' +
     '<button class="dash-tab" data-page="reason-time" onclick="dashTab(\'reason-time\')">Reason Analysis and Time</button>' +
     '<button class="dash-tab" data-page="quick-booking" onclick="dashTab(\'quick-booking\')">Shipment Analysis</button>' +
     '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
@@ -11202,6 +11275,8 @@ function renderLargeFileDashboard(data) {
         '</div><div class="note">Open Shipment Analysis to review explicit shipment IDs and the separate short-description matching result. The analysis loads only when that tab is selected.</div>' +
       '</div></div>' +
     '</div>' +
+    '<div class="dash-page" data-page="time-based"><div id="timeBasedCalculationSection" data-lazy-time-based="true">' +
+      '<div class="loading">Open Time-based Capacity to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="reason-time"><div id="reasonAnalysisSection" data-lazy-reason-analysis="true">' +
       '<div class="loading">Open Reason Analysis and Time to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="quick-booking"><div id="quickBookingSection" data-lazy-shipment="true">' +
@@ -11528,6 +11603,7 @@ function renderDashboard(data) {
   document.getElementById('dashContent').innerHTML =
     '<div class="dash-tabs">' +
       '<button class="dash-tab active" data-page="overview" onclick="dashTab(\'overview\')">Overview</button>' +
+      '<button class="dash-tab" data-page="time-based" onclick="dashTab(\'time-based\')">Time-based Capacity</button>' +
       '<button class="dash-tab" data-page="reason-time" onclick="dashTab(\'reason-time\')">Reason Analysis and Time</button>' +
       '<button class="dash-tab" data-page="teams" onclick="dashTab(\'teams\')">Teams &amp; Assignees</button>' +
       '<button class="dash-tab" data-page="categories" onclick="dashTab(\'categories\')">Categories &amp; Baseline</button>' +
@@ -11536,6 +11612,8 @@ function renderDashboard(data) {
       '<button class="dash-tab" data-page="shipment-region" onclick="dashTab(\'shipment-region\')">Shipment and Region</button>' +
     '</div>' +
     '<div class="dash-page active" data-page="overview">' + OV + '</div>' +
+    '<div class="dash-page" data-page="time-based"><div id="timeBasedCalculationSection" data-lazy-time-based="true">' +
+      '<div class="loading">Open Time-based Capacity to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="reason-time"><div id="reasonAnalysisSection" data-lazy-reason-analysis="true">' +
       '<div class="loading">Open Reason Analysis and Time to load this view.</div></div></div>' +
     '<div class="dash-page" data-page="teams">' + TM + '</div>' +
