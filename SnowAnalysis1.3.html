@@ -5839,6 +5839,7 @@ const closedIncompleteCategoryExpanded = new Set();
 const closedIncompleteSourceExpanded = new Set();
 const closedIncompleteCategorySort = { key: 'secs', dir: 'desc' };
 const capacityWorkExpanded = new Set();
+const capacityWorkRegionExpanded = new Set();
 const capacityWorkSort = { key: 'secs', dir: 'desc' };
 const capNum = (n, digits = 1) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const capHours = secs => Number(secs || 0) / 3600;
@@ -5876,6 +5877,12 @@ function closedIncompleteCategorySortBy(key) {
 function capacityWorkToggle(category) {
   if (capacityWorkExpanded.has(category)) capacityWorkExpanded.delete(category);
   else capacityWorkExpanded.add(category);
+  renderCapacity();
+}
+function capacityWorkRegionToggle(category, region) {
+  const key = category + '\x1f' + region;
+  if (capacityWorkRegionExpanded.has(key)) capacityWorkRegionExpanded.delete(key);
+  else capacityWorkRegionExpanded.add(key);
   renderCapacity();
 }
 function capacityWorkSortBy(key) {
@@ -6008,7 +6015,11 @@ function renderCapacity() {
       name: category, tickets: 0, secs: 0, closedTickets: 0, closedSecs: 0, regions: new Map(),
     };
     const regionItem = item.regions.get(region) || {
-      name: region, tickets: 0, secs: 0, closedTickets: 0, closedSecs: 0,
+      name: region, tickets: 0, secs: 0, closedTickets: 0, closedSecs: 0, assignmentGroups: new Map(),
+    };
+    const assignmentGroup = input.agroup || 'Unassigned';
+    const assignmentItem = regionItem.assignmentGroups.get(assignmentGroup) || {
+      name: assignmentGroup, tickets: 0, secs: 0, closedTickets: 0, closedSecs: 0,
     };
     const tickets = Number(input.tickets || 0), secs = Number(input.secs || 0);
     const closedTickets = Number(input.closed_tickets || 0), closedSecs = Number(input.closed_secs || 0);
@@ -6016,6 +6027,9 @@ function renderCapacity() {
     item.closedTickets += closedTickets; item.closedSecs += closedSecs;
     regionItem.tickets += tickets; regionItem.secs += secs;
     regionItem.closedTickets += closedTickets; regionItem.closedSecs += closedSecs;
+    assignmentItem.tickets += tickets; assignmentItem.secs += secs;
+    assignmentItem.closedTickets += closedTickets; assignmentItem.closedSecs += closedSecs;
+    regionItem.assignmentGroups.set(assignmentGroup, assignmentItem);
     item.regions.set(region, regionItem);
     capacityWorkCategoryMap.set(category, item);
   });
@@ -6043,7 +6057,17 @@ function renderCapacity() {
     const main = '<tr><td>' + toggle + '<b>' + escHTML(row.name) + '</b></td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(row.secs)) + ' h</td><td class="num"><b>' + capNum(fte(capHours(row.secs)), 2) + ' FTE</b></td><td class="num">' + row.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(row.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(row) + '</td></tr>';
     if (!expanded) return main;
     const regions = [...row.regions.values()].sort((a, b) => b.secs - a.secs || a.name.localeCompare(b.name));
-    const regionBody = regions.map(region => '<tr><td>' + escHTML(region.name) + '</td><td class="num">' + region.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.secs)) + ' h</td><td class="num"><b>' + capNum(fte(capHours(region.secs)), 2) + ' FTE</b></td><td class="num">' + region.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(region) + '</td></tr>').join('') || '<tr><td colspan="7">No regions in this category.</td></tr>';
+    const regionBody = regions.map(region => {
+      const regionKey = row.name + '\x1f' + region.name;
+      const regionExpanded = capacityWorkRegionExpanded.has(regionKey);
+      const regionToggle = '<button type="button" class="capacity-expand-button" aria-expanded="' + regionExpanded + '" aria-label="' + (regionExpanded ? 'Collapse' : 'Expand') + ' assignment groups for ' + attr(region.name) + '" onclick="capacityWorkRegionToggle(this.dataset.category, this.dataset.region)" data-category="' + attr(row.name) + '" data-region="' + attr(region.name) + '">' + (regionExpanded ? '▾' : '▸') + '</button>';
+      const regionMain = '<tr><td>' + regionToggle + '<b>' + escHTML(region.name) + '</b></td><td class="num">' + region.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.secs)) + ' h</td><td class="num"><b>' + capNum(fte(capHours(region.secs)), 2) + ' FTE</b></td><td class="num">' + region.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(region) + '</td></tr>';
+      if (!regionExpanded) return regionMain;
+      const assignments = [...region.assignmentGroups.values()].sort((a, b) => b.secs - a.secs || a.name.localeCompare(b.name));
+      const assignmentBody = assignments.map(assignment => '<tr><td>' + escHTML(assignment.name) + '</td><td class="num">' + assignment.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(assignment.secs)) + ' h</td><td class="num"><b>' + capNum(fte(capHours(assignment.secs)), 2) + ' FTE</b></td><td class="num">' + assignment.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(assignment.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(assignment) + '</td></tr>').join('') || '<tr><td colspan="7">No assignment groups in this region.</td></tr>';
+      const assignmentDetail = '<div class="capacity-assignment-panel"><div class="note" style="margin-bottom:6px"><b>' + escHTML(region.name) + '</b> — assignment-group breakdown</div><table class="gtable"><thead><tr><th>Assignment group</th><th class="num">Tickets</th><th class="num">Total hours</th><th class="num">Total FTE</th><th class="num">Closed Incomplete tickets</th><th class="num">Closed Incomplete hours</th><th class="num">Closed Incomplete FTE / share</th></tr></thead><tbody>' + assignmentBody + '</tbody><tfoot><tr style="background:rgba(18,50,74,.06);font-weight:700"><td>Assignment-group total</td><td class="num">' + region.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(region.secs)), 2) + ' FTE</td><td class="num">' + region.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(region.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(region) + '</td></tr></tfoot></table></div>';
+      return regionMain + '<tr class="capacity-assignment-detail"><td colspan="7">' + assignmentDetail + '</td></tr>';
+    }).join('') || '<tr><td colspan="7">No regions in this category.</td></tr>';
     const detail = '<div class="capacity-assignment-panel"><div class="note" style="margin-bottom:6px"><b>' + escHTML(row.name) + '</b> — region breakdown</div><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Total hours</th><th class="num">Total FTE</th><th class="num">Closed Incomplete tickets</th><th class="num">Closed Incomplete hours</th><th class="num">Closed Incomplete FTE / share</th></tr></thead><tbody>' + regionBody + '</tbody><tfoot><tr style="background:rgba(18,50,74,.06);font-weight:700"><td>Region total</td><td class="num">' + row.tickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(row.secs)) + ' h</td><td class="num">' + capNum(fte(capHours(row.secs)), 2) + ' FTE</td><td class="num">' + row.closedTickets.toLocaleString() + '</td><td class="num">' + capNum(capHours(row.closedSecs)) + ' h</td><td class="num">' + capacityWorkCell(row) + '</td></tr></tfoot></table></div>';
     return main + '<tr class="capacity-assignment-detail"><td colspan="7">' + detail + '</td></tr>';
   }).join('') || '<tr><td colspan="7">No category work in scope.</td></tr>';
@@ -6147,7 +6171,7 @@ function renderCapacity() {
     '<div class="chart-grid"><div class="chart-card"><h3>Closed Incomplete — by category ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Use the caret to expand a category into assignment groups. Click the category name to show its region split, and click any column heading to sort. ' + (closedIncompleteDrill.dimension === 'region' ? 'Showing categories for region “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'region\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr>' + categorySortHeader('Category', 'name') + categorySortHeader('Tickets', 'tickets', true) + categorySortHeader('Average / ticket', 'avgMinutes', true) + categorySortHeader('Logged effort', 'secs', true) + categorySortHeader('FTE', 'fte', true) + '</tr></thead><tbody>' + (categoryBreakdownRows || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(categoryRows, closedIncompleteDrill.dimension === 'region' ? 'Total (selected region)' : 'Total (all categories)') + '</table></div></div>' +
     '<div class="chart-card"><h3>Closed Incomplete — by region ' + deckTag('32') + '</h3><div class="note">Average / ticket = logged time ÷ tickets. Click a region to show its category split. Region is derived from assignment group and country. ' + (closedIncompleteDrill.dimension === 'category' ? 'Showing regions for category “' + escHTML(closedIncompleteDrill.value) + '”. <button type="button" onclick="closedIncompleteDrillSelect(\'category\', this.dataset.value)" data-value="' + attr(closedIncompleteDrill.value) + '" style="border:0;background:transparent;color:var(--blue);text-decoration:underline;cursor:pointer">Clear selection</button>' : '') + '</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Region</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th></tr></thead><tbody>' + (regionRows.map(r => breakdownRow('region', r)).join('') || '<tr><td colspan="5">No Closed Incomplete tickets in scope.</td></tr>') + '</tbody>' + breakdownTotal(regionRows, closedIncompleteDrill.dimension === 'category' ? 'Total (selected category)' : 'Total (all regions)') + '</table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full"><h3>Closed Incomplete — FTE by open from ' + deckTag('32') + '</h3><div class="note">This uses the original <b>open_from</b> field from the uploaded CSV. Each source&apos;s FTE = its Closed Incomplete logged effort ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. Use the caret to expand a source into assignment groups; each assignment-group total reconciles to its source. The table total reconciles to Closed Incomplete handling above.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr><th>Open from</th><th class="num">Tickets</th><th class="num">Average / ticket</th><th class="num">Logged effort</th><th class="num">FTE</th><th class="num">FTE share</th></tr></thead><tbody>' + closedIncompleteSourceBody + '</tbody>' + closedIncompleteSourceTotal + '</table></div></div></div>' +
-    '<div class="chart-grid"><div class="chart-card full"><h3>Total workload and Closed Incomplete capacity — by category and region</h3><div class="note">Total hours use the uploaded <b>time_worked</b> values for every ticket in the current team scope. FTE = logged hours ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. Closed Incomplete share compares Closed Incomplete logged effort with all logged effort in the same category or region. Use the caret to expand a category into regions and click a heading to sort all categories.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr>' + capacityWorkHeader('Category / region', 'name') + capacityWorkHeader('Tickets', 'tickets', true) + capacityWorkHeader('Total hours', 'secs', true) + capacityWorkHeader('Total FTE', 'fte', true) + capacityWorkHeader('Closed Incomplete tickets', 'closedTickets', true) + capacityWorkHeader('Closed Incomplete hours', 'closedSecs', true) + capacityWorkHeader('Closed Incomplete FTE / share', 'closedShare', true) + '</tr></thead><tbody>' + capacityWorkBody + '</tbody>' + capacityWorkTotal + '</table></div></div></div>' +
+    '<div class="chart-grid"><div class="chart-card full"><h3>Total workload and Closed Incomplete capacity — category, region and assignment group</h3><div class="note">Total hours use the uploaded <b>time_worked</b> values for every ticket in the current team scope. FTE = logged hours ÷ ' + capNum(monthlyHours) + ' monthly hours per FTE. Closed Incomplete share compares Closed Incomplete logged effort with all logged effort in the same category, region or assignment group. Expand a category into regions, then expand a region into assignment groups. Click a heading to sort all categories.</div><div class="tbl-wrap"><table class="gtable capacity-table"><thead><tr>' + capacityWorkHeader('Category / region', 'name') + capacityWorkHeader('Tickets', 'tickets', true) + capacityWorkHeader('Total hours', 'secs', true) + capacityWorkHeader('Total FTE', 'fte', true) + capacityWorkHeader('Closed Incomplete tickets', 'closedTickets', true) + capacityWorkHeader('Closed Incomplete hours', 'closedSecs', true) + capacityWorkHeader('Closed Incomplete FTE / share', 'closedShare', true) + '</tr></thead><tbody>' + capacityWorkBody + '</tbody>' + capacityWorkTotal + '</table></div></div></div>' +
     '<div class="chart-grid"><div class="chart-card full capacity-qb"><h3>Quick Booking — live country comparison ' + deckTag('15') + '</h3><div class="note">Derived from category = Quick Booking in the uploaded CSV. “Over threshold” uses the editable threshold above and time_worked.</div><div class="tbl-wrap"><table class="gtable"><thead><tr><th>Country</th><th class="num">Tickets</th><th class="num">Average time</th><th class="num">Over threshold</th><th class="num">Logged effort</th></tr></thead><tbody>' + qbRows + '</tbody></table></div></div></div>';
   capacityLoaded = true;
 }
