@@ -6015,7 +6015,7 @@ function renderCapacity() {
     // Keep this presentation rule local to the capacity table so other region
     // analytics retain their established country/region definitions.
     if (category.trim().toUpperCase() === 'ARN' &&
-        ['NZ', 'UK', 'SE', 'EMEA'].includes(region.toUpperCase())) {
+        ['NL', 'UK', 'SE', 'EMEA'].includes(region.toUpperCase())) {
       region = 'EMEA';
     }
     const item = capacityWorkCategoryMap.get(category) || {
