@@ -6010,7 +6010,14 @@ function renderCapacity() {
   const capacityWorkCategoryMap = new Map();
   (data.allCategoryRegionInputs || []).forEach(input => {
     const category = input.category || 'Uncategorised';
-    const region = regionOf(input.agroup, input.country) || 'Unspecified';
+    let region = regionOf(input.agroup, input.country) || 'Unspecified';
+    // ARN is managed as one EMEA workload across these four operating labels.
+    // Keep this presentation rule local to the capacity table so other region
+    // analytics retain their established country/region definitions.
+    if (category.trim().toUpperCase() === 'ARN' &&
+        ['NZ', 'UK', 'SE', 'EMEA'].includes(region.toUpperCase())) {
+      region = 'EMEA';
+    }
     const item = capacityWorkCategoryMap.get(category) || {
       name: category, tickets: 0, secs: 0, closedTickets: 0, closedSecs: 0, regions: new Map(),
     };
